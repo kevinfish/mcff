@@ -1,0 +1,17 @@
+#!ff needs
+\ $Id: hello,v 1.1 2006/05/08 19:55:06 lavarenn Exp $
+\ Any text after backslash+space is a comment to end-of-line.
+\ This file is executable by the shell (/bin/sh or other)
+\ thanks to its first two characters (#!) which trigger the
+\ shell to execute the command "ff needs ./thisfilename"
+\ (where thisfilename is a placeholder for this file's name).
+\ This triggers ff to load (at tib) and evaluate the string
+\ "needs ./thisfilename", then needs loads (after the string)
+\ thisfilename contents, skips its first line if beginning with #!,
+\ then evaluates the rest: if this ever returns, then ff enters
+\ the user interaction loop (repeat prompt read compiler again).
+
+."hello_world!" bye
+
+As "bye" returns from ff to the shell, the remaining
+of this file contents after "bye" is ignored by ff.

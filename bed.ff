@@ -1,0 +1,61 @@
+#! ff needs
+\ $Id: bed.ff,v 1.5 2006-12-08 13:53:13 lavarenn Exp $
+tib $2'0000+ constant `sob \ start-of-blocks, leaves room for ff.help
+eob `sob- 512/ constant `#ob \ number-of-blocks
+variable `b#  \ block-number of current block
+: `>b `b#@
+: block 512* `sob+ ; \ n -- @ ; block n base
+: `>L 64* `>b + ;
+: i` ;` swap `>L + lnparse >rswapr> move ; \ line col <text> -- ; input
+: s` ;` `b#! ;   \ n -- ; setsup curr.block
+: n` 1 `b# +! ;  \ -- ; next curr.block
+: p` 1 `b# -! ;  \ -- ; prev curr.block
+: x` `>b 512 : `bl 32 fill ; \ -- ; clears curr.block
+: X` ;` `>L 64 `bl ;         \ line -- ; clears line
+: E` ;` : `el `b#@ >r `>L 64 eval r> `b#! ;  \ line -- ; evals line
+: \1` 1 `b#!                 \ -- ; evals block 1
+: e` 8 TIMES r ~ 8+ `el REPEAT ;  \ -- ; evals curr.block
+: \f` `#ob TIMES r ~ `#ob + `b#! e` REPEAT ; \ -- ; evals all blocks
+: new` `sob `#ob 512* `bl ;       \ -- ; clears all blocks
+: `--- ."__" 6 TIMES r ~ '6+ emit ."----:----" REPEAT ."6---" cr ;
+: `cv cls`
+: v` `---  \ -- ; displays curr.block
+     `>b 8 TIMES r ~ 8+ . 64 under type cr 64+ REPEAT drop
+     `--- ."Block_" `b#@ . ."of_0.." `#ob 1- . cr ;
+: edit` `cv ' ui !^ ;  \ -- ; displays curr.block after each command line
+: quit` ui ^^ ;  \ -- ; undo edit`
+new edit \ initially clear all blocks & initiate editor mode
+
+: bsave \ M N "file" -- ; save blocks M to N into "file"
+  openw ?ior 1+ over- 512* swap block swap ior@ write ior@ close 2drop ;
+: bload \ "file" -- ; load "file" into block0 and following
+  openr ?ior `sob `#ob 512* ior@ read ior@ close 2drop ;
+
+EOF
+
+This is a RetroForth-like 8lines*64chars=512bytes block editor.
+
+You can load it either from the FreeForth prompt:  needs bed.ff
+or under Linux, provided bed.ff has execute permission,
+you can also load it directly from the shell prompt:  ./bed.ff
+
+Use edit` ( -- ) to enter editor mode, where the display is cleared and
+the current block displayed after every command line (which output is lost).
+Use quit` ( -- ) to exit editor mode.
+
+Use s` ( B -- ) to jump to block B (i.e. set the current block number to B).
+Use n` ( -- ) or p` ( -- ) to jump to the next/+1 or previous/-1 block.
+Use v` ( -- ) to display the current block (useless when in editor mode).
+
+Use x` ( -- ) to clear the current block.
+Use X` ( L -- ) to clear line L of the current block.
+Use i` ( L C <text> -- ) to input <text> beginning at line L column C,
+       example:  7 0 i This text goes to line7 from column0
+Use E` ( L -- ) to evaluate (i.e. compile) line L of current block.
+Use e` ( -- ) to evaluate (i.e. compile) the 8 lines of current block.
+
+Use \1` ( -- ) to compile block1.
+Use \f` ( -- ) to compile all blocks, from block0 to last block.
+
+Use block ( B -- @ ) to convert block B to its base address, example:
+          2 block  8 block  512 move ;  \ copy block2 into block8

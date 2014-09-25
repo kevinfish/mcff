@@ -1,0 +1,1955 @@
+#!/usr/bin/ff needs
+\ $Id: ff43.ff,v 1.14 2009-06-15 20:39:15 lavarec Exp $
+."+_ff43_-_FreeForth_development_environment_for_MSP430_micro-controllers^J"
+
+\ Definitions of terms used in this source file:
+\
+\ + host:
+\   PC workstation on which this source file is compiled, providing human
+\   interface and compilation resources during target application development
+\
+\ + target:
+\   MSP430 microcontroler for which application code is cross-compiled by host
+\
+\ + host image of target memory:
+\   host buffer mirroring target memory, into which the host cross-compiles
+\   target code and data, while marking modified target addresses into an
+\   "update" host buffer, which is reset when the target memory is updated
+\   by downloading code and data marked in the update buffer
+\
+\ + umbilical link:
+\   serial link connecting host and target during target code development and
+\   debug, allowing the host to communicate with a target monitor
+\
+\ + target monitor:
+\   target program allowing the host either to download, from host image to
+\   target memory, code and data marked in the update buffer, or to upload
+\   code and data from target memory to host image for dump or disassembly,
+\   or to request target to start execution from a downloaded address
+\
+\ + incremental edit/compile/load/execute:
+\   interactive development technique supported by integrated development tools
+\   able to keep their context over several edit/compile/load/execute cycles:
+\   while the target executes the monitor in parallel with the application code
+\   (thanks to a simple multitasker and/or interrupts), the host interacts with
+\   the developper to edit a command line, then compiles it on top of the
+\   compilation context resulting from the previous cycles, and, when finishing
+\   the compilation of an "anonymous" subroutine, updates the target memory
+\   context by downloading all the code and data marked in the update buffer
+\   since the previous download, and requests the target monitor to execute
+\   a call to the anonymous subroutine
+\
+\ + anonymous subroutine:
+\   a "named" subroutine entry point is defined (with "A:") by a label, which
+\   is a symbolic constant equal to the subroutine entry point address, which
+\   may be (backward-only) referenced in later compiled code or data;
+\   an "anonymous" subroutine entry point is not declared by a label, but
+\   implicitely defined by the end of the previous subroutine (see ";A");
+\   as an anonymous subroutine cannot be later referenced, it must be "used"
+\   immediately: as soon as its ending ";A" is compiled, it is downloaded
+\   (together with all code and data compiled since the last download) into
+\   target memory, then the target is requested to call its entry point, and
+\   the host compilation pointer is moved back to this entry point, so the
+\   execute-once anonymous subroutine code space may be reused
+\
+\ + ROM BootStrapLoader (aka "ROMBSL", see TI application report slaa089c.pdf):
+\   target monitor residing in MSP430 boot ROM (address range $0C00-$0FFF),
+\   executed at reset after the sequence: MSP.RST low, MSP.TCK high-low twice,
+\   and MSP.RST high; it is a software UART polling (i.e. interrupt disabled)
+\   P1.1=BSLTX to transmit and P2.2=BSLRX to receive 8bits/evenParity/1stop
+\   at autobaud upto 9600 bps in halfduplex with specific framing protocol;
+\   unhappily, this ROM BSL is bugged (its checksum verification has the nasty
+\   side effect to write to the address corresponding to the checksum value),
+\   so it can only be used with great care
+\
+\ + RAM BootStapLoader (aka "RAMBSL"):
+\   target monitor downloaded into target RAM with the help of the ROM BSL,
+\   to overcome the ROMBSL bugs and speedup the communication with host
+\   to initialize the target flash memory;
+\   it is a software UART polling the same BSLTX and BSLRX to communicate
+\   8bits/noParity/1stop at 115200 bps in halfduplex with BLD protocol
+\
+\ + BLD protocol:
+\   transfer units are 16-bits words, LSByte1st MSByte2nd ("littelEndian");
+\   each transaction begins with the target sending one "synchro" byte, telling
+\   host that target is ready for a new transaction; then host sends two words,
+\   an ADDRESS and a COUNT:
+\   . if COUNT is null:
+\     if ADDRESS is null, transaction is finished, target sends its synchro,
+\     otherwise target executes a call at ADDRESS, transaction ends on return
+\   . otherwise if COUNT is even:
+\     host downloads COUNT/2 words that target writes sequentially from ADDRESS
+\   . otherwise COUNT is odd:
+\     host uploads COUNT/2 words that target reads sequentially from ADDRESS
+\   Note that target writes/reads 16-bits words, then the MSP430 SFR address
+\   range (0-255), which is only byte-accessible, cannot be directly accessed
+\   by BLD protocol; however, it is indirectly accessible by downloading and
+\   executing code that byte-accesses the SFR address range.
+\
+\ + FLASH BootLoaDer:
+\   target monitor downloaded into target flash memory (usually by RAM
+\   BootStrapLoader) implementing an UART 8bits/noParity/1stop at 115200 bps
+\   in halfduplex with BLD protocol, with interrupts disabled to allow flash
+\   interrupt vectors to be erased and reprogrammed;
+\   depending on FLDUART compilation constant, it may be either a software UART
+\   polling BSLTX and BSLRX (FLDUART=-1 for MSPs with no hardware UART), or the
+\   hardware UART0 (FLDUART=0 for MSPs with no UART1) or UART1 (FLDUART=1 for
+\   MSPs using UART0 as hardware SPI port);
+\   at reset, the target transmits a "ready" byte on the UART to the host:
+\   if the host immediately echoes the byte, the target executes the FLASH
+\   BootLoader, otherwise, after a delay of 156ms without echo, the target
+\   start executing application code (which in turn may execute an interrupt-
+\   driven target monitor as one of its tasks for debugging).
+
+\ This single file provides:
+\ + an MSP430 incremental/interactive macro-assembler
+\ + an MSP430 interactive disassembler (see "@DIS")
+\ + an MSP430 ROMBSL interactive interface (to be used with great care)
+\ + a disassembly of MSP430F147 ROM (for full understanding of ROMBSL bugs)
+\ + an MSP430 RAMBSL for fast flash programming at 115200bps
+\ + an MSP430 Flash BootLoaDer with a choice of 3 different polling UARTs
+\ + a set of MSP430 memory and peripherals live-state dumping tools
+\ + TI.txt and Intel.hex file formats converters into or from host image
+
+\ The compilation of this file is conditionned by a few constants and words
+\ which get default values if not defined before compiling this file:
+\   RESETuart, BSLPORT, BLDPORT, MSPTYPE, FLDUART, INIFLASH
+\ Look for "[~]" to find them and their associated comments in this file.
+
+\ PC UARTs use (see ff.ff for PC UARTs interface):
+\   As the GPIO ports used for MSP.ROMBSL.UART (P1.1=BSLTX and P2.2=BSLRX)
+\ are different from those used for MSP.UART0 (P3.4=UTXD0 and P3.5=URXD0),
+\ and different from those used for MSP.UART1 (P3.6=UTXD1 and P3.7=URXD1),
+\ the PC UART used to communicate with MSP.ROMBSL.UART cannot be also used
+\ to communicate with MSP.UART0 or MSP.UART1:
+\ + PC.uart1.BSLPORT (i.e. "1 uart! BSLPORT port!") is used for MSP.ROMBSL.UART
+\ + PC.uart0.BLDPORT (i.e. "0 uart! BLDPORT port!") is used for MSP.UART0or1
+\ Moreover, as MSP.RST and MSP.TCK must be driven in a specific sequence to
+\ activate the ROMBSL, depending on the UARTs cables interconnexions, they
+\ may be driven either by PC.uart1 (RESETuart=1) or by PC.uart0 (RESETuart=0);
+\ see the definitions of RST0 RST1 and TCK0 TCK1 for the default PC.RESETuart
+\ signals assignments (DTR to RST and RTS to TCK, both inverted by V24 voltage
+\ translators), that you can define differently before loading this file.
+
+
+\ --------------------------------------------------------------------------
+\ TODO:
+\ + add more checkings depending on MSPTYPE
+
+\ --------------------------------------------------------------------------
+."+_ASM43_-_MSP430_AsSeMbler^J"
+
+\ UG="User's Guide"(slau049.pdf)
+\ Instruction set format(UG5.3p82): F E D C  B A 9 8  7 6 5 4  3 2 1 0
+\ + double operand instructions:    op.code  src.reg  AdBwAsrc dst.reg
+\ + single operand instructions:    0 0 0 1  -op.code-- BwAdst dst.reg
+\ + un/conditional instructions:    0 0 1 -cond- -----jump.offset-----
+\ Instruction map(UG5.4p87):
+\   1000 RRC  1080 SWPB  1100 RRA  1180 SXT  1200 PUSH  1280 CALL  1300 RETI
+\   1040 RRC.B           1140 RRA.B          1240 PUSH.B
+\   2000 JNZ  2800 JNC  3000 JN   3800 JL
+\   2400 JZ   2C00 JC   3400 JGE  3C00 JMP
+\   4000 MOV  6000 ADDC  8000 SUB  A000 DADD  C000 BIC  E000 XOR
+\   5000 ADD  7000 SUBC  9000 CMP  B000 BIT   D000 BIS  F000 AND
+\ Registers(UG5.1p66): R0=PC R1=SP R2=SR/CG1 R3=CG2 R4..R15
+\   PC and SP must be even.
+\   SP: POP SP (i.e. MOV @R1+,R1) ignores "+", equivalent to MOV @R1,R1
+\   SR: F-9:reserved 8:V 7:SCG1 6:SCG0 5:OSCoff 4:CPUoff 3:GIE 2:N 1:Z 0:C
+\   CG1: Asrc=0:reg 1:(0) 2:+4 3:+8
+\   CG2: Asrc=0:+0  1:+1  2:+2 3:-1
+\ Addressing modes(UG5.2p71): Asrc|Adst(0..3) or Ad(0..1)
+\   0:Rn  1:X(Rn)[X(R0):$sym,X(R2):&abs]  2:@Rn  3:@Rn+[@R0+:#imm]
+\   sym: offset relative to the address where the offset is stored
+\ Clock cycles(UG3-72): un/cond:2
+\   2op(Asrc/Ad): 0/0:1 2/0:2 3/0:2 1/0:3 0/1:4 2/1:5 3/1:5 1/1:6 dstPC:+1
+\   1op(Asrc/PUSH/CALL): 0:1/3/4 1:4/5/5 2:3/4/4 3:3/4/5 Jx:2 RETI:5+IRQ:6
+
+\ ------------------------------------------------------------------------
+\ MSP430 64pins pinout:
+\
+\  PCDTR>RST-----------------------+ +---------------------------TCK<PCRTS
+\                   P6.0/A0 -----+ | |     +----- TDO/TDI
+\                   P6.1/A1 ---+ | | |     | +--- XT2IN
+\                   P6.2/A2 -+ | | | |     | | +- XT2OUT
+\                AVss -----+ | | |RST/NMI  | | | +------- P5.7/TBoutH
+\                DVss ---+ | | | | | |TMS  | | | | +----- P5.6/ACLK
+\                AVcc -+ | | | | | |TCK|TDI| | | | | +--- P5.5/SMCLK
+\                      6 6 6 6 6 5 5 5 5 5 5 5 5 5 5 4
+\                      4 3 2 1 0 9 8 7 6 5 4 3 2 1 0 9
+\              DVcc 1                                  48 P5.4/MCLK 
+\           P6.3/A3 2                                  47 P5.3/UCLK1
+\           P6.4/A4 3                                  46 P5.2/SOMI1
+\           P6.5/A5 4                                  45 P5.1/SIMO1
+\           P6.6/A6 5                                  44 P5.0/STE1 
+\           P6.7/A7 6                                  43 P4.7/TBCLK
+\             Vref+ 7                                  42 P4.6/TB6  
+\               XIN 8             MSP430F13x           41 P4.5/TB5  
+\         XOUT/TCLK 9             MSP430F14x           40 P4.4/TB4  
+\            Veref+ 10                                 39 P4.3/TB3  
+\          V(e)ref- 11                                 38 P4.2/TB2  
+\        P1.0/TACLK 12                                 37 P4.1/TB1  
+\  <BSLTX  P1.1/TA0 13                                 36 P4.0/TB0  
+\          P1.2/TA1 14                                 35 P3.7/URXD1(F14x)<
+\          P1.3/TA2 15                                 34 P3.6/UTXD1(F14x)>
+\        P1.4/SMCLK 16                                 33 P3.5/URXD0<
+\                      1 1 1 2 2 2 2 2 2 2 2 2 2 3 3 3
+\                      7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2
+\            P1.5/TA0 -+ | | | | | | | | | | | | | | +--- P3.4/UTXD0>
+\            P1.6/TA1 ---+ | | | | | | | | | | | | +----- P3.3/UCLK0
+\            P1.7/TA2 -----+ | | | | | | | | | | +------- P3.2/SOMI0
+\                P2.0/ACLK --+ | | | | | | | | +--------- P3.1/SIMO0
+\                P2.1/TAINCLK -+ | | | | | | +----------- P3.0/STE0 
+\  >BSLRX        P2.2/CAOUT/TA0 -+ | | | | +-------- P2.7/TA0       
+\                P2.3/CA0/TA1 -----+ | | +---------- P2.6/ADC12CLK  
+\                P2.4/CA1/TA2 -------+ + ----------- P2.5/Rosc      
+
+\ ------------------------------------------------------------------------
+\ MSP430F11x2 20pins pinout:
+\
+\                          +--------------+
+\                     TEST | 1         20 | P1.7/TA2/TDO/TDI 
+\                      VCC | 2         19 | P1.6/TA1/TDI/TCLK
+\                Rosc/P2.5 | 3         18 | P1.5/TA0/TMS     
+\                      VSS | 4         17 | P1.4/SMCLK/TCK    <PCRTS
+\                     XOUT | 5  MSP430 16 | P1.3/TA2         
+\                      XIN | 6  F11x2  15 | P1.2/TA1         
+\  PCDTR>          RST/NMI | 7         14 | P1.1/TA0     BSLTX>PCRXD
+\             ACLK/A0/P2.0 | 8         13 | P1.0/TACLK/ADC10CLK
+\            INCLK/A1/P2.1 | 9         12 | P2.4/TA2/A4/VREF+/VeREF+
+\  PCTXD>BLSRX TA0/A2/P2.2 | 10        11 | P2.3/TA1/A3/VREF-/VeREF-
+\                          +--------------+
+
+\ ------------------------------------------------------------------------
+\ Host memory image of MSP430 memory:
+create mem $18000 allot ; mem $18000 0 fill \ cache and changed marks
+       mem $1000+ $F000 $FF fill \ flash address range, initialized virgin
+: `@ dup $FFFF0001& 0= drop IF mem+ ;THEN !"invalid_MSP430_address"
+: _@ `@ w@ ; \ m@ -- w
+: _! `@ tuckw!  1 swap mem- 2/ mem+ $10000+ c! ; \ w m@ --
+
+\ Host memory image inspection tools for assembler debug:
+: 2wdump \ end @ --
+  dup .w .":" dup 16+ -rot  \ -- lim end @
+  START >rswapr> = IF nip cr 2wdump ;THEN >rswapr>
+  \ dup 7& 0= drop IF space THEN \ not practical for @DIS
+    space dup _@ .w 2+
+  ENTER u<= UNTIL 2drop drop space ;
+: ;wdump` ;` \ @ -- ; CR to get next 16, space+CR to exit
+  BEGIN 16 bounds under 2wdump stopdump? UNTIL drop ;
+: wdump bounds 2wdump cr ; \ @ # --
+
+\ Process changed parts of host memory image:
+:^ .changed swap .w ."+" .w space ; \ @ # -- ; process run of changed words
+: .all`  \ -- ; scan mem for runs of changed words
+  mem $10000+ $8000 bounds BEGIN u> WHILE c@+ 0- drop TILL 1- tuck
+    BEGIN 1+ u> WHILE dupc@ 0- drop 0= UNTIL >rswapr> \ -- @end @1st @afterLast
+  tuck over- 2* swap mem- $10000- 2* swap .changed REPEAT 2drop
+: mrst mem $10000+ $8000 erase ; \ clear mem-changes
+
+\ Basic compilation support:
+variable _p  \ compilation allocation pointer
+variable `i  \ last compiled instruction pointer
+: `o _p@ `i!         \ op -- ; compile opcode
+: _,` ;` _p@ _! 2 _p +! ; \ n -- ; compile 1 word
+: `B $40  \ convert last compiled instruction to byte addressing mode
+: `i+! `i@ tuck _@ | swap _! ;  \ mask -- ; patch last compiled instruction
+
+\ Srce addressing modes:
+: $,` ;` _p@ - _,` $010 \ a -- ; symbolic srce addressing mode (PC),
+: `s `i@ _@ $C000& drop `i+! ? !"not_for_single_operand_instruction"
+: `si >r ;` _,` r> `s ; \ a m -- ; indexed srce addressing mode
+: &,` ;` _,` $210 `s ;  \ a -- ; absolute srce addressing mode (R2),
+\ Constant-generators addressing modes are used for 6 small constants:
+create `cg, $3000000 , $3100001 , $3200002 , $330FFFF , $2200004 , $2300008 ,
+: #,` ;` $FFFF&        \ n -- ; immediate srce addressing mode @PC+,
+  `cg, 6 TIMES w@+ rot = nip swap IF nip rdrop w@ `s ;THEN  2+ REPEAT drop
+  _,` $030 `s ;
+
+\ Dest addressing modes:
+: `rslv \ @src @dst -- ; resolve conditional jump offset
+  over- 2/ 1-  dup 2* over^ -$400& drop IF !"jump_off_range" ;THEN
+  $3FF& over _@ $FC00& | swap _! ;
+variable `dmask \ selects fields
+: `RL?   `dmask@ $FBF& $FBF- drop ; \ RLA RLC
+: $` ;` \ a -- ; symbolic dest addressing mode (PC)
+  `RL? 0= IF dup $,` THEN \ RLA RLC
+  `dmask@ 0- 0= drop IF `i@ swap `rslv ;THEN  \ conditional jump
+  _p@ - _,` $090
+: `d `dmask@ 0- 0= IF !"$symbolic_addressing_mode_expected" ;THEN
+  2dup ~ & $20& 0= drop IF & `i+! ;THEN
+  !"not_for_double_operand_instruction"
+: `di >r ;` \ a m -- ; indexed dest addressing mode
+  `RL? 0= IF 0 over `si THEN  _,` r> `d ;
+: &&` ;` \ a -- ; absolute dest addressing mode (R2)
+  `RL? 0= IF dup &,` THEN  _,` $292 `d ;
+\ Constant-generators addressing modes are used for 4 small constants:
+\ bug'CPU4': "PUSH 4 #" and "PUSH 8 #" must not be implemented with CG1
+create `cg $0030000 , $0130001 , $0230002 , $033FFFF , \ $0220004 , $0320008 ,
+: #`  ;` $FFFF&        \ n -- ; immediate dest addressing mode @PC+ PUSH/CALL
+  `cg 4 TIMES w@+ rot = nip swap IF nip rdrop w@ `d ;THEN  2+ REPEAT drop
+  _,` $030 `d ;
+
+\ Srce registers:
+: PC,`  $000 `s ; : (PC),`  $010 `si ; : @PC,`  $020 `s ; : @PC+,`  $030 `s ;
+: SP,`  $100 `s ; : (SP),`  $110 `si ; : @SP,`  $120 `s ; : @SP+,`  $130 `s ;
+: SR,`  $200 `s ; \ other addressing modes dedicated to constant generator
+: R4,`  $400 `s ; : (R4),`  $410 `si ; : @R4,`  $420 `s ; : @R4+,`  $430 `s ;
+: R5,`  $500 `s ; : (R5),`  $510 `si ; : @R5,`  $520 `s ; : @R5+,`  $530 `s ;
+: R6,`  $600 `s ; : (R6),`  $610 `si ; : @R6,`  $620 `s ; : @R6+,`  $630 `s ;
+: R7,`  $700 `s ; : (R7),`  $710 `si ; : @R7,`  $720 `s ; : @R7+,`  $730 `s ;
+: R8,`  $800 `s ; : (R8),`  $810 `si ; : @R8,`  $820 `s ; : @R8+,`  $830 `s ;
+: R9,`  $900 `s ; : (R9),`  $910 `si ; : @R9,`  $920 `s ; : @R9+,`  $930 `s ;
+: R10,` $A00 `s ; : (R10),` $A10 `si ; : @R10,` $A20 `s ; : @R10+,` $A30 `s ;
+: R11,` $B00 `s ; : (R11),` $B10 `si ; : @R11,` $B20 `s ; : @R11+,` $B30 `s ;
+: R12,` $C00 `s ; : (R12),` $C10 `si ; : @R12,` $C20 `s ; : @R12+,` $C30 `s ;
+: R13,` $D00 `s ; : (R13),` $D10 `si ; : @R13,` $D20 `s ; : @R13+,` $D30 `s ;
+: R14,` $E00 `s ; : (R14),` $E10 `si ; : @R14,` $E20 `s ; : @R14+,` $E30 `s ;
+: R15,` $F00 `s ; : (R15),` $F10 `si ; : @R15,` $F20 `s ; : @R15+,` $F30 `s ;
+
+\ Dest registers:
+: PC`   $000 `d ; : (PC)`   $090 `di ; : @PC`   $020 `d ; : @PC+`   $030 `d ;
+: SP`   $101 `d ; : (SP)`   $191 `di ; : @SP`   $121 `d ; : @SP+`   $131 `d ;
+: SR`   $202 `d ; \ other addressing modes dedicated to constant generator
+: R4`   $404 `d ; : (R4)`   $494 `di ; : @R4`   $424 `d ; : @R4+`   $434 `d ;
+: R5`   $505 `d ; : (R5)`   $595 `di ; : @R5`   $525 `d ; : @R5+`   $535 `d ;
+: R6`   $606 `d ; : (R6)`   $696 `di ; : @R6`   $626 `d ; : @R6+`   $636 `d ;
+: R7`   $707 `d ; : (R7)`   $797 `di ; : @R7`   $727 `d ; : @R7+`   $737 `d ;
+: R8`   $808 `d ; : (R8)`   $898 `di ; : @R8`   $828 `d ; : @R8+`   $838 `d ;
+: R9`   $909 `d ; : (R9)`   $999 `di ; : @R9`   $929 `d ; : @R9+`   $939 `d ;
+: R10`  $A0A `d ; : (R10)`  $A9A `di ; : @R10`  $A2A `d ; : @R10+`  $A3A `d ;
+: R11`  $B0B `d ; : (R11)`  $B9B `di ; : @R11`  $B2B `d ; : @R11+`  $B3B `d ;
+: R12`  $C0C `d ; : (R12)`  $C9C `di ; : @R12`  $C2C `d ; : @R12+`  $C3C `d ;
+: R13`  $D0D `d ; : (R13)`  $D9D `di ; : @R13`  $D2D `d ; : @R13+`  $D3D `d ;
+: R14`  $E0E `d ; : (R14)`  $E9E `di ; : @R14`  $E2E `d ; : @R14+`  $E3E `d ;
+: R15`  $F0F `d ; : (R15)`  $F9F `di ; : @R15`  $F2F `d ; : @R15+`  $F3F `d ;
+
+\ Single operand instructions: use with dest register or addressing mode
+: `o1 $3F `dmask! `o ;                   \ V N Z C
+: RRC`  $1000 `o1 ; : RRC.B`  RRC`  `B ; \ 0 * * *
+: RRA`  $1100 `o1 ; : RRA.B`  RRA`  `B ; \ 0 * * *
+: PUSH` $1200 `o1 ; : PUSH.B` PUSH` `B ; \ - - - -
+: SWPB` $1080 `o1 ; : SXT`   $1180 `o1 ; \ - - - -  0 * * ~Z
+: RETI` $1300 `o1 ;     variable `callmrk
+: CALL` $1280 `o1  `i@ `callmrk! ; 
+
+\ Conditional jumps: use with $symbolic addressing mode only, backward ref only
+: `o0 0 `dmask! `o ;
+: JZ` $2400 `o0 ; : JNZ` $2000 `o0 ; \ Z=1 Z=0
+: JC` $2C00 `o0 ; : JNC` $2800 `o0 ; \ C=1 C=0        C:u< NC:u>=
+: JN` $3000 `o0 ; : JGE` $3400 `o0 ; \ N=1 N^V=0      L:<  GE:>=
+: JL` $3800 `o0 ; : JMP` $3C00 `o0 ; \ N^V=1 uncond
+JZ`  ' alias JEQ` \ EQual
+JNZ` ' alias JNE` \ Non Equal
+JC`  ' alias JHS` \ Higher or Same (unsigned)
+JNC` ' alias JLO` \ LOwer (unsigned)
+\ WARNING: comparisons are from right to left: CMP R0, R1 JL=jmpifR1<R0
+
+\ Double operand instructions: use with src and dest reg or addressing mode
+: `o2 $8F `dmask! `o ;                   \ V N Z C
+: MOV`  $4000 `o2 ; : MOV.B`  MOV`  `B ; \ - - - -
+: ADD`  $5000 `o2 ; : ADD.B`  ADD`  `B ; \ * * * *
+: ADDC` $6000 `o2 ; : ADDC.B` ADDC` `B ; \ * * * *
+: SUBC` $7000 `o2 ; : SUBC.B` SUBC` `B ; \ * * * *
+: SUB`  $8000 `o2 ; : SUB.B`  SUB`  `B ; \ * * * *
+: CMP`  $9000 `o2 ; : CMP.B`  CMP`  `B ; \ * * * *
+: DADD` $A000 `o2 ; : DADD.B` DADD` `B ; \ ? * * *   C=result>$9999
+: BIT`  $B000 `o2 ; : BIT.B`  BIT`  `B ; \ 0 * * ~Z
+: BIC`  $C000 `o2 ; : BIC.B`  BIC`  `B ; \ - - - -
+: BIS`  $D000 `o2 ; : BIS.B`  BIS`  `B ; \ - - - -
+: XOR`  $E000 `o2 ; : XOR.B`  XOR`  `B ; \ * * * ~Z  V=bothOp<0
+: AND`  $F000 `o2 ; : AND.B`  AND`  `B ; \ 0 * * ~Z
+
+\ Emulated instructions: use with dest register or addressing mode
+: POP`  MOV` @SP+,` ; : POP.B`  POP`  `B ;
+: ADC`  ADDC` 0 #,` ; : ADC.B`  ADC`  `B ;
+: DADC` DADD` 0 #,` ; : DADC.B` DADC` `B ;
+: DEC`  SUB`  1 #,` ; : DEC.B`  DEC`  `B ;
+: DECD` SUB`  2 #,` ; : DECD.B` DECD` `B ;
+: INC`  ADD`  1 #,` ; : INC.B`  INC`  `B ;
+: INCD` ADD`  2 #,` ; : INCD.B` INCD` `B ;
+: SBC`  SUBC` 0 #,` ; : SBC.B`  SBC`  `B ;
+: INV`  XOR` -1 #,` ; : INV.B`  INV`  `B ;
+: CLR`  MOV`  0 #,` ; : CLR.B`  CLR`  `B ;
+: TST`  CMP`  0 #,` ; : TST.B`  TST`  `B ;
+: RLA`  ADD`  $FBF `dmask! ; : RLA.B` RLA` `B ; \ src=dst
+: RLC`  ADDC` $FBF `dmask! ; : RLC.B` RLC` `B ; \ src=dst
+: CLRC` BIC` 1 #,` SR` ; : SETC` BIS` 1 #,` SR` ;
+: CLRZ` BIC` 2 #,` SR` ; : SETZ` BIS` 2 #,` SR` ;
+: CLRN` BIC` 4 #,` SR` ; : SETN` BIS` 4 #,` SR` ;
+: DINT` BIC` 8 #,` SR` ; : EINT` BIS` 8 #,` SR` ;
+: BR`   MOV` PC` $F30 `dmask! ; \ dst->src
+: NOP`  $4303 _,` ; \ MOV#0,R3
+
+\ RET` automatically optimizes tail-recursion:
+: "",` ;` 1+ 2/ TIMES w@+ _,` REPEAT drop  \ "" -- ; compile a literal string
+: -opt`  0 `callmrk! ;  \ -- ; prevent next RET` tail-recursion optimization
+: RET` `i@ `callmrk@ <> 2drop IF  MOV` @SP+,` PC`  ;THEN  \ regular return
+  `i@ _@ $12B0- 0= drop  \ CALL#?
+  IF `i@ 2+  dup _@ swap -  dup 2/ ^ -$400& 0= drop  \ offset in range?
+    IF  `i@ dup _p!  JMP` _p@ _@ `rslv  ;THEN  \ short relative jump
+  THEN  `i@ dup _@  dup $F& $100* swap $30& | $4000|  swap _!  ;  \ CALL->BR
+
+variable `anon  \ stores entry point of anonymous subroutine
+: cleanup` \ -- ; removes last def after error
+  `anon@ 0- 0= IF drop H@ dup@ swap 5+ c@+ + H! THEN
+: org` ;` dup _p! `anon! ;  $200 org`  \ start of ram
+: .H` _p@ `anon@ 0- 0= IF drop H@ @ THEN 2wdump ;
+
+\ Interactivity layer:
+:^ _execute wdump ' .changed !^ .all` ."call_$" .w ; \ default: wdump
+: ;A` \ -- ; closes a subroutine, named or anonymous
+  `anon@ _p@ <> drop IF RET`  \ -- @ ; non-empty: close subroutine
+    0- IF dup _p! _execute over THEN  \ -- * ; deallocate before execute
+  THEN drop _p@ `anon! ;  \ open new anonymous subroutine
+: A:` \ <name> -- ; creates an assembler label: use with any addressing mode
+  ;` `anon@ 0- drop IF ;A` 0 `anon! THEN  \ flush anonymous
+  _p@ equ`  0 `callmrk! ;
+
+\ Control structures:
+JZ` ' alias NZ?`  JNZ` ' alias Z?`  \ Z=1 Z=0
+JZ` ' alias NE?`  JNZ` ' alias EQ?`
+JC` ' alias NC?`  JNC` ' alias C?`  \ C=1 C=0
+JC` ' alias LO?`  JNC` ' alias HS?`
+JL` ' alias GE?`  JGE` ' alias L?`  \ N^V=1 N^V=0
+JN` ' alias NN?`  \ no N opposite   \ N=1
+: @IF` `dmask@ 0- 0= drop IF `i@ ;THEN !"jump-condition_missing" \ -- @
+: @SKIP` JMP` @IF` `B ;  \ -- @ ; `B to differ from START`
+: @ELSE` @SKIP` swap     \ @ -- @'
+: @THEN` _p@ `rslv  0 `callmrk! ; \ @ --
+: ;@THEN` RET` @THEN` ;
+variable `mrk \ -mrk +mrk
+: @START` JMP`
+: @BEGIN` `mrk@ _p@ $1'0001* `mrk! ;
+: @ENTER` `mrk w@ 2- dup _@ $3C00- 0= drop IF @THEN` ;THEN !"START_missing"
+: @WHILE` @IF`
+: `+jmp `mrk 2+  2dup w@ `rslv  w! ; \ backward-link forward-refs
+: @BREAK` @ELSE` `+jmp ;
+: @TILL` @IF`
+: `-jmp `mrk w@ `rslv ;
+: @AGAIN` @ELSE` `-jmp ;
+: @UNTIL` @TILL`
+: @END` `mrk w@+ swap w@ \ -- mrk -mrk +mrk
+  START dup _@ over @THEN` -$400| 1+ 2* + \ backward-link offset always<0
+  ENTER = UNTIL 2drop `mrk! ;
+: @REPEAT` JMP` @IF` `-jmp  @END` ;
+16 base!
+variable _d  $300 _d!  \ data ram allocation pointer
+: BUF:` ;` _d@ equ` _d +! ;  \ n <name> -- ; creates a buffer of n bytes
+
+\ ---------------------------------------------------------
+."+_MMR43_-_MSP430_Memory_Mapped_Registers^J"
+
+\ Bit/mask definers, for use after MOV BIT BIS BIC XOR
+: `bi r> `B c@+ #,` c@ &&` ;
+: b:` :` `bi ' call, c, c, anon:` ; \ addr mask <name> --
+: .0:` ;` $01 b:` ; : .1:` ;` $02 b:` ; : .2:` ;` $04 b:` ; : .3:` ;` $08 b:` ;
+: .4:` ;` $10 b:` ; : .5:` ;` $20 b:` ; : .6:` ;` $40 b:` ; : .7:` ;` $80 b:` ;
+
+\ --------------------------
+\ 0000+100: Byte Peripherals
+
+\ 0000+10: Special Function Registers:
+  \             7       6      5       4      3     2     1     0 
+  $0 equ IE1  \ UTXIE0  URXIE0 ACCVIE  NMIIE              OFIE  WDTIE
+  $1 equ IE2  \                UTXIE1  URXIE1
+  $2 equ IFG1 \ UTXIFG0 URXIFG0        NMIIFG             OFIFG WDTIFG
+  $3 equ IFG2 \                UTXIFG1 URXIFG1
+  $4 equ ME1  \ UTXE0   URXE0=USPIE0
+  $5 equ ME2  \                UTXE1   URXE1=USPIE1
+  \             7       6      5       4      3     2     1     0 
+  IE1  .7: UTXIE0`  IE1  .6: URXIE0`  IE1  .5: ACCVIE` IE1  .4: NMIIE`
+  IE2  .5: UTXIE1`  IE2  .4: URXIE1`  IE1  .1: OFIE`   IE1  .0: WDTIE`
+  IFG1 .7: UTXIFG0` IFG1 .6: URXIFG0` IFG1 .1: OFIFG`  IFG1 .0: WDTIFG`
+  IFG2 .5: UTXIFG1` IFG2 .4: URXIFG1`
+  ME1  .7: UTXE0`   ME1  .6: URXE0`   URXE0` ' alias USPIE0`
+  ME2  .5: UTXE1`   ME2  .4: URXE1`   URXE1` ' alias USPIE1`
+
+\ 0010+10: Digital I/O port P3 and P4 control (PxDIR=0:in,1:out)
+  $18 equ P3IN  $19 equ P3OUT  $1A equ P3DIR  $1B equ P3SEL
+  $1C equ P4IN  $1D equ P4OUT  $1E equ P4DIR  $1F equ P4SEL
+
+\ 0020+10: Digital I/O port P1 and P2 control (PxIES=0:_-,1:-_)
+  $20 equ P1IN  $21 equ P1OUT  $22 equ P1DIR  $23 equ P1IFG
+  $24 equ P1IES $25 equ P1IE   $26 equ P1SEL                 P1OUT .1: BSLTX`
+  $28 equ P2IN  $29 equ P2OUT  $2A equ P2DIR  $2B equ P2IFG
+  $2C equ P2IES $2D equ P2IE   $2E equ P2SEL                 P2IN  .2: BSLRX`
+
+\ 0030+10: Digital I/O port P5 and P6 control
+  $30 equ P5IN  $31 equ P5OUT  $32 equ P5DIR  $33 equ P5SEL
+  $34 equ P6IN  $35 equ P6OUT  $36 equ P6DIR  $37 equ P6SEL
+
+\ 0048+03: ADC10 control (MSP430x11x2 and MSP430x12x2 only)
+  $48 equ ADC10DTC0 \ 8ADC10TB 4ADC10TC 2ADC10B1 1ADC10FETCH
+  $49 equ ADC10DTC1 \ number of transfers per block (0=disabled)
+  $4A equ ADC10AE
+
+\ 0050+10: System clock generator and Comparator A
+  \                  7     6     5     4      3     2     1     0    BSLET
+  $56 equ DCOCTL  \  DCO2  DCO1  DCO0  MOD4   MOD3  MOD2  MOD1  MOD0  80A7
+  $57 equ BCSCTL1 \ XT2OFF XTS   DIVA1 DIVA0  0     RSEL2 RSEL1 RSEL0 8587
+  $58 equ BCSCTL2 \  SELM1 SELM0 DIVM1 DIVM0  SELS  DIVS1 DIVS0 DCOR  0000
+  $59 equ CACTL1
+  $5A equ CACTL2
+  $5B equ CAPD
+
+\ 0070+10: USART0 and USART1 (UG12.5p232)
+  \ USART0:         7    6     5     4     3      2      1      0 
+  $70 equ U0CTL   \ PENA PEV   SP    CHAR  Listen SYNC   MM     SWRST
+  $71 equ U0TCTL  \ CKPH CKPL  SSEL1 SSEL0 URXSE  TXWake STC    TXEPT
+  $72 equ U0RCTL  \ FE   PE    OE    BRK   URXEIE URXWIE RXWake RXERR
+  $73 equ U0MCTL  \ Modulation Control Reg
+  $74 equ U0BR0   \ BaudRate low byte
+  $75 equ U0BR1   \ BaudRate high byte
+  $76 equ U0RXBUF
+  $77 equ U0TXBUF
+  \ USART1:         7    6     5     4     3      2      1      0 
+  $78 equ U1CTL   \ PENA PEV   SP    CHAR  Listen SYNC   MM     SWRST
+  $79 equ U1TCTL  \ free CKPL  SSEL1 SSEL0 URXSE  TXWake free   TXEPT
+  $7A equ U1RCTL  \ FE   PE    OE    BRK   URXEIE URXWIE RXWake RXERR
+  $7B equ U1MCTL  \ Modulation Control Reg
+  $7C equ U1BR0   \ BaudRate low byte
+  $7D equ U1BR1   \ BaudRate high byte
+  $7E equ U1RXBUF
+  $7F equ U1TXBUF
+
+\ 0080+10: ADC12 memory control:  80%EOS 40%VR- 30%VR+ 0f%INCH (%:ROwhen ENC=1)
+  $80 equ ADC12MCTL0  \ INCH=0:A0  VR+=0:AVcc
+  $81 equ ADC12MCTL1  \ INCH=1:A1  VR+=1:Vref+
+  $82 equ ADC12MCTL2  \ INCH=2:A2  VR+=2-3:VeRef+
+  $83 equ ADC12MCTL3  \ INCH=3:A3
+  $84 equ ADC12MCTL4  \ INCH=4:A4  VR-=0:AVss
+  $85 equ ADC12MCTL5  \ INCH=5:A5  VR-=1:Vref-/VeRef-
+  $86 equ ADC12MCTL6  \ INCH=6:A6
+  $87 equ ADC12MCTL7  \ INCH=7:A7
+  $88 equ ADC12MCTL8  \ INCH=8:VeRef+
+  $89 equ ADC12MCTL9  \ INCH=9:Vref-/VeRef-
+  $8A equ ADC12MCTL10 \ INCH=A:TemperatureSensor (Tsample > 30us)
+  $8B equ ADC12MCTL11 \ INCH=B-F:(AVcc-AVss)/2
+  $8C equ ADC12MCTL12
+  $8D equ ADC12MCTL13 \ INCH=A: V=0.00355*T(Celsius)+0.986(V) (use REF1V5)
+  $8E equ ADC12MCTL14
+  $8F equ ADC12MCTL15
+
+\ ------------------------
+\ 0100+80:Word Peripherals
+
+  $11E equ TBIV
+  $120 equ WDTCTL
+
+\ 0128+08: Flash Control: (UGp415) B:1000+80, A:1080+80
+  \ Flash timing generator frequency must be in [257..476]kHz  t=(FN+1)/MCLK
+  \ Program timings byte/word: single=35t blkFist=30t blkNext=21t blkLast=6t
+  \ Erase timings: MassErase=5297t PageErase=4819t
+  \ FCTL.MSByte(r/w)=$96/$A5 (UGC3.1p426)
+  \ FCTL           7      6     5     4     3    2       1      0 
+  $128 equ FCTL1 \ SEGWRT WRT                    MEras   Erase
+  $12A equ FCTL2 \ SSEL1  SSEL0 FN5   FN4   FN3  FN2     FN1    FN0
+  $12C equ FCTL3 \              EMEX  Lock  WAIT ACCVIFG KEYV   BUSY
+
+  $12E equ TAIV
+
+\ 0130+10: Multiplier
+  $130 equ MPY   \ operand1, operation=Multiply
+  $132 equ MPYS  \ operand1, operation=MultiplySigned
+  $134 equ MAC   \ operand1, operation=MultiplyAccumulate
+  $136 equ MACS  \ operand1, operation=MultiplyAccumulateSigned
+  $138 equ OP_2  \ operand2 (starts operation)
+  $13A equ ResLo
+  $13C equ ResHi
+  $13E equ SumExt
+
+\ 0140+20: ADC12 conversion 0:Vin<=VR- FFF:Vin>=VR+ FFF*(Vin - VR-)/(VR+ - VR-)
+  $140 equ ADC12MEM0
+  $142 equ ADC12MEM1
+  $144 equ ADC12MEM2
+  $146 equ ADC12MEM3
+  $148 equ ADC12MEM4
+  $14A equ ADC12MEM5
+  $14C equ ADC12MEM6
+  $14E equ ADC12MEM7
+  $150 equ ADC12MEM8
+  $152 equ ADC12MEM9
+  $154 equ ADC12MEM10
+  $156 equ ADC12MEM11
+  $158 equ ADC12MEM12
+  $15A equ ADC12MEM13
+  $15C equ ADC12MEM14
+  $15E equ ADC12MEM15
+
+\ 0160+20: Timer_A
+  $160 equ TACTL    $170 equ TAR
+  $162 equ TACCTL0  $172 equ TACCR0
+  $164 equ TACCTL1  $174 equ TACCR1
+  $166 equ TACCTL2  $176 equ TACCR2
+
+\ 0180+20: Timer_B
+  $180 equ TBCTL    $190 equ TBR
+  $182 equ TBCCTL0  $192 equ TBCCR0
+  $184 equ TBCCTL1  $194 equ TBCCR1
+  $186 equ TBCCTL2  $196 equ TBCCR2
+  $188 equ TBCCTL3  $198 equ TBCCR3
+  $18A equ TBCCTL4  $19A equ TBCCR4
+  $18C equ TBCCTL5  $19C equ TBCCR5
+  $18E equ TBCCTL6  $19E equ TBCCR6
+
+\ 01A0+10: ADC12 control and interrupt (%:ROwhen ENC=1)
+\ Tsample > (Rext+2kOhm)*ln(2^13)*40pF+0.8us = Rext*0.36(us/kOhm)+1.52(us)
+  $1A0 equ ADC12CTL0 \ f000%SHT1 f00%SHT0 80%MSC 40%REF2V5 20%REFON
+                     \ 10%ADC12ON  8ADC12OVIE 4ADC12TOVIE 2ENC 1ADC12SC
+  $1A2 equ ADC12CTL1 \ f000%CSTARTADD c00%SHS 200%SHP 100%ISSH
+                     \ e0%ADC12DIV 18%ADC12SSEL  6CONSEQ 1ADC12BUSY
+  $1A4 equ ADC12IFG
+  $1A6 equ ADC12IE
+  $1A8 equ ADC12IV   \ 0:noIRQ 2:MEMovrfl 4:ConvTimeOver 6+2*i=ADC12IFGi
+
+\ 01B0+0C: ADC10 control (MSP430x11x2 and MSP430x12x2 only) (%:ROwhen ENC=1)
+  $1B0 equ ADC10CTL0 \ e000%SREF 1800%ADC10SHT 400%ADC10SR 200%REFOUT
+                     \ 100%REFBURST 80%MSC 40%REF2V5 20%REFON 10%ADC10ON
+                     \ 8ADC10IE 4ADC10IFG 2ENC 1ADC10SC
+  $1B2 equ ADC10CTL1 \ f000%INCH c00%SHS 200%ADC10DF 100%ISSH
+                     \ e0%ADC10DIV 18%ADC10SSEL  6CONSEQ 1ADC10BUSY
+  $1B4 equ ADC10MEM  \ 0:Vin<=VR-,3FF:Vin>=VR+,3FF*(Vin - VR-)/(VR+ - VR-)
+  $1BC equ ADC10SA   \ $0200 on POR
+
+\ -------------------------
+\ 0200-...: Memory segments
+
+  $200 equ RAMstart  \ end marker for disassembler
+
+\           MSP430F1xx: F149 F148 F147 F135 F133 F1132
+\ 0200+...: Ram         +800 +800 +400 +200 +100 +100
+\ 0C00+400: Boot memory +400 +400 +400 +400 +400 +400
+\ 1000+100: Info flash  +100 +100 +100 +100 +100 +100 (128 bytes sectors)
+\ ...-FFFF: Main flash  1100 4000 8000 C000 E000 E000 (512 bytes sectors)
+\ FFE0+020: Int. vect.  +60K +48K +32K +16K +8K  +8K  (bootloader key)
+
+\ Interrupt vectors:(priority) sourceModule moduleFlags
+\           MSP430F149..133:                MSP430F12x2,11x2:
+\ FFE0:(0)  (lowest) unused: good place for software version
+\ FFE2:(1)  P2       P2IFG0..P2IFG7         --
+\ FFE4:(2)  USART1tx UTXIFG1                P1       P1IFG0..P1IFG7
+\ FFE6:(3)  USART1rx URXIFG1                P2       P2IFG0..P2IFG7
+\ FFE8:(4)  P1       P1IFG0..P1IFG7         --
+\ FFEA:(5)  Timer_A3 CCIFG1 CCIFG2 TAIFG    ADC10    ADC10IFG
+\ FFEC:(6)  Timer_A3 CCIFG0                 USART0tx UTXIFG0 (12x2 only)
+\ FFEE:(7)  ADC12    ADC12IFG               USART0rx URXIFG0 (12x2 only)
+\ FFF0:(8)  USART0tx UTXIFG0                Timer_A3 CCIFG1 CCIFG2 TAIFG
+\ FFF2:(9)  USART0rx URXIFG0                Timer_A3 CCIFG0
+\ FFF4:(10) Watchdog WDTIFG                 Watchdog WDTIFG
+\ FFF6:(11) Compar_A CAIFG                  --
+\ FFF8:(12) Timer_B7 BCCIFG1..BCCIFG6       --
+\ FFFA:(13) Timer_B7 BCCIFG0                --
+\ FFFC:(14) NMI      NMIIFG OFIFG ACCVIFG   NMI      NMIIFG OFIFG ACCVIFG
+\ FFFE:(15) RST      WDTIFG KEYV            RST      WDTIFG KEYV
+
+\ -----------------------------------------------------------------------
+."+_DIS43_-_MSP430_DISassembler^J"
+
+variable `p  \ points on next word
+: `p@+  \ -- n ; get next word
+  `p@ _@  2 `p +!
+;
+: `type  \ @ # -- ; type string without trailing spaces
+  over+ BEGIN 1- dupc@ 32- drop UNTIL 1+ over- type
+;
+: `.sym  \ n -- ; display memory-mapped-register symbol if defined between
+  >r     \ first symbol (IE1=0) and last symbol (RAMstart=$200)
+  "IE1" find 2drop which@  "RAMstart" find 2drop which@  \ -- hlim h | == n
+  BEGIN dup@ r - 0= drop IF rdrop nip 5+ c@+ type ;THEN  5+ c@+ 1+ + u<
+  UNTIL 2drop r>
+: `.w  \ n -- ; pretty print n
+  dup -9 10 within IF .\ ;THEN ."$" $FF <= drop IF .b ;THEN .w
+;
+: `mr  \ mod reg -- ; disassemble addressing mode and register
+  0 CASE  0 CASE ."PC" ;THEN  2 CASE ."@PC" ;THEN
+    `p@+ swap 2& drop IF `.w ."_#" ;THEN `p@ 2- + $FFFF& `.sym ."_$"
+  ;THEN  \ -- mod reg
+  2 CASE  0 CASE ."SR" ;THEN  1 CASE `p@+ `.sym ."_&"  1 `p +! ;THEN \ p odd:&&
+    1 swap << . ."#"  \ 4 8
+  ;THEN  \ -- mod reg
+  3 CASE  3 = drop IF -1_ THEN . ."#"  \ 0 1 2 -1
+  ;THEN  \ -- mod reg
+  over 1- 0= drop IF `p@+ `.w ."_(" THEN
+  over 2& drop IF ."@" THEN
+  1 CASE ."SP" ELSE ."R" 10 /% 0- drop IF ."1" THEN '0'+ emit THEN
+  1 CASE .")" ;THEN  3 CASE ."+" ;THEN  drop
+;
+: `sop  \ op -- ; disassemble single op
+  $1300 CASE ."RETI_" ;THEN
+  dup $1000 $1300 within 0= IF drop ."???_" ;THEN
+  dup $0380& 5 >> "RRC_SWPBRRA_SXT_PUSHCALL" drop + 4 `type \ -- op
+  dup $40& drop IF .".B" dup $80& drop IF ."??" THEN THEN space
+  dup 4 >> 3& \ -- op Adst
+: `dstreg     swap $F& `mr `p@ 1& IF ."&" THEN `p -! space \ `p odd:&&
+;
+: `emuop \ emulated instructions: {op[2],name[4]}*
+  [ $4130 w, ] ,"RET_" [ $4303 w, ] ,"NOP_" \ MOV@SP+,PC MOV#0,R3
+  [ $C312 w, ] ,"CLRC" [ $D312 w, ] ,"SETC" \ BIC#1,SR   BIS#1,SR
+  [ $C322 w, ] ,"CLRZ" [ $D322 w, ] ,"SETZ" \ BIC#2,SR   BIS#2,SR
+  [ $C222 w, ] ,"CLRN" [ $D222 w, ] ,"SETN" \ BIC#4,SR   BIS#4,SR
+  [ $C232 w, ] ,"DINT" [ $D232 w, ] ,"EINT" \ BIC#8,SR   BIS#8,SR
+  [ $4130 w, ] ,"POP_" [ $4300 w, ] ,"CLR_" \ MOV@SP+,rm MOV#0,rm
+  [ $5310 w, ] ,"INC_" [ $5320 w, ] ,"INCD" \ ADD#1,rm   ADD#2,rm
+  [ $6300 w, ] ,"ADC_" [ $7300 w, ] ,"SBC_" \ ADDC#0,rm  SUBC#0,rm
+  [ $8310 w, ] ,"DEC_" [ $8320 w, ] ,"DECD" \ SUB#1,rm   SUB#2,rm
+  [ $9300 w, ] ,"TST_" [ $A300 w, ] ,"DADC" \ CMP#0,rm   DADD#0,rm
+  [ $E330 w, ] ,"INV_" [ $4000 w, ] ,"BR__" \ XOR#-1,rm  MOVx,PC
+  [ $5000 w, ] ,"RLA_" [ $6000 w, ] ,"RLC_" \ ADDr,r     ADDCr,r
+  [ $5090 w, ] ,"RLA_" [ $6090 w, ] ,"RLC_" \ ADDm,m     ADDCm,m
+: `emu? \ key @ # -- @|0 ; z?=emu ; scan `emuop table, display name if emulated
+  TIMES w@+ >rswapr> = drop swap IF 4 `type 0 BREAK 4+ REPEAT nip 0-
+;
+: `RL  2 `p +! \ RLA RLC
+: `BR  space 4_ >> dup 4 >> swap 3& `dstreg ; \ BR
+: `dop  \ op -- ; disassemble double op
+  dup `emuop ' 10 `emu? 0= IF 2drop space ;THEN \ -- op @ ; 0op
+  BEGIN over $FF30& swap 11 `emu?           \ -- op @ ; z?=emu ; 1op
+  WHILE over $F0CF& swap  1 `emu? `BR 0= ?  \ -- op @ ; z?=emu ; BR
+    over dup 8 >> ^ $F& drop 0= \ src.reg==dst.reg ; nz?=regular ; RL
+  WHILE over $F0B0& swap  2 `emu?           \ -- op @ ; z?=emu ; RLr
+  WHILE `p@ mem+ dupw@ swap 2+ w@ ^ drop 0= \ src.lit==dst.lit
+  WHILE over $F0B0& swap  2 `emu? `RL 0= ?  \ -- op @ ; z?=emu, nz?=regular
+  END  swap \ -- @ op ; z?=emu, nz?=regular
+  IF dup $4000- $F000& 10 >> \ -- @ op op.code*4
+    "MOV_ADD_ADDCSUBCSUB_CMP_DADDBIT_BIC_BIS_XOR_AND_" drop + 4 `type \ -- @ op
+  THEN  dup $40& drop IF .".B" THEN space  swap 0- drop \ -- op ; z?=emu
+  IF    dup 4 >> 3& over 8 >> $F& `mr .",_" `p@ 1& `p -! \ Asrc src.reg
+  THEN  dup 7 >> 1& `dstreg  \ Ad dst.reg  (`p odd:&&)
+;
+: .wop  \ op -- ; disassemble op
+  dup $2000- drop 0<  `sop ?  \ singleOp, otherwise:
+  dup $4000- drop 0>= `dop ?  \ doubleOp, otherwise conditional:
+  dup $3FF& swap 10 >> 7& 3*  \ -- joff cond*3
+  "JNZJZ_JNCJC_JN_JGEJL_JMP" drop + 3 `type space  \ -- joff
+  $200 >= drop IF $400- THEN 2* `p@ + `.w ."_$_"
+;
+variable `col  stdout ,  \ display column to align comments
+: `coltype  \ @ # --
+  `col 4+ @ stdout- drop IF 2dup `col 4+ @ write drop THEN \ copy to file
+  2dup stdout write `col +!  \ to display; reset `col for each LF(ASCII 10):
+  bounds BEGIN c@+ 10- drop 0= IF over over- `col! THEN u<= UNTIL 2drop
+;
+: @DIS`  \ @ -- ; disassemble from address @
+  ;` depth 0= drop IF wsparse find 0- drop IF !"???" ;THEN THEN `p!
+  `coltype ' type !^
+  BEGIN  0 `col!  `p@ `p@+ .wop `p@ swap  \ -- @end @start
+    23 `col@ - 0 max TIMES space REPEAT
+    ."\\_" 2dup 2wdump swap - 2/ 3+ 5* TIMES space REPEAT
+    stopdump?
+  UNTIL  type ^^
+;
+
+: TX2 dup TX 8 >> TX ;  \ w -- ; LSByte1st,
+: RX2 RX RX 8 << | ;    \ -- w ; MSByte2nd.
+dumpterm` ' alias DUMPTERM`
+\ -------------------------------------------------------------------
+[1] [IF] ."+_BSL43_-_MSP430_ROM-BootStrap-Loader^J"
+
+\ BSL43 testing steps:
+\ - comment([0]) this file's BLD43 and FLD43 sections
+\ - check on a scope RST/DTR and TCK/RTS signals, and the BSLRST sequence
+\ - check on a scope BSLTX and BSLRX: after BSLRST, send $80, must reply $90
+\ - execute >MER to fully Mass-ERase the MSP flash
+\ - execute >PASS to access the ROM bootstrap-loader
+\   you may use BRST as a shortcut to execute: BSLRST >PASS
+\ - play with ;BSLDUMP to check the flash is erased, or to dump the ROM
+\   interactivity is limited by the ROM-BSL bug, which displays XXXX^=YYYY:
+\   check that XXXX is off ram code and data (XXXX>=$0A00 is always safe)
+\ - uncomment([1]) this file's BLD43 section and continue testing there.
+
+0 constant [TRANSMISSION-LESS-TEST]`
+[TRANSMISSION-LESS-TEST] [IF] \ fake RX/TX to see what would be transmitted:
+: RX ."<90" $90 ;
+: RX2 RX RX 8 << + ;
+: TX .">" 2 .#s ;
+: TX2 dup TX 8 >> TX ; \ for transmission-less test
+0 constant BLDPORT  0 constant BSLPORT
+[THEN]
+
+\ PC.uart1.BSLPORT (i.e. "1 uart! BSLPORT port!") is used to communicate with
+\   MSP430 ROM BootStrapLoader software UART on P1.1=BSLTX and P2.2=BSLRX
+\ PC.uart0.BLDPORT (i.e. "0 uart! BLDPORT port!") is used to communicate with
+\   MSP430 Flash BootLoaDer UART (see FLD43 chapter hereunder).
+
+  \ BSL/uart1@4800bpsEvenParity
+  \ BLD/uart0@115200bpsNoParity
+  \ RESETuart supports DTR and RTS signals, used for RESET and TCK:
+[~] RESETuart [IF] 0 equ RESETuart [THEN] \ default: RST/TCK on uart0
+[~] RST0 [IF] DTR1 ' alias RST0  DTR0 ' alias RST1 [THEN] \ inverted by V24
+[~] TCK0 [IF] RTS1 ' alias TCK0  RTS0 ' alias TCK1 [THEN] \ inverted by V24
+
+\ [Q1]  F135  RST+BSL/uart1/DB9'0  BLD/uart0/DB9-25  (RST inverted by WD PCB)
+\ [NC1] F135  RST+BLD/uart0/MSP.BRXBTX
+\ [ATX] F147  RST+BLD/uart0/DB9'0/MSP.UART1  BSL/uart1/DB9'1
+\ [ET]  F147  RST+BSL/uart1/DB9'0  BLD/uart0/DB9'1/MSP.UART1
+
+  [os] [IF]  [ELSE] $11 CommStateFlags! [THEN] \ 10DTRen+1Binary (see ff.ff)
+
+[~] BLDPORT [IF] \ unless BLDPORT already defined:
+  [os] [IF]  0 [ELSE] 1 [THEN] constant BLDPORT \ Linux:ttyS0   Windows:COM1
+[THEN]
+
+[~] BSLPORT [IF] \ unless BSLPORT already defined:
+  [os] [IF] 32 [ELSE] 2 [THEN] constant BSLPORT \ Linux:ttyUSB0 Windows:COM2
+[THEN]
+
+0 uart! BLDPORT port! 1 uart! BSLPORT port! ;
+
+: flushRX COM@ 1+ drop IF BEGIN RX? WHILE RX drop REPEAT THEN ;
+
+: MSPRST  \ -- ; boot-flash: while TCK high, RST low then high
+  \ RST xxx_______________---------------------  BSLTX=P1.1>
+  \ TCK xxx-------------------xxxxxxxxxxxxxxxxx  BSLRX=P2.2<
+  \                       ^ user program starts at address in $FFFE
+  COM 4+ @ 3& \ save current uart
+[ RESETuart ] [IF] \ RESETuart=1:
+  1 uart! BSLPORT port!   4800 bps ' catch 0- drop
+  IF drop  0 uart! flushRX  ."Please_reset_MSP..._"
+  ELSE evenParity  flushRX
+    RST0  10 ms  0 uart! flushRX  1 uart! flushRX
+    RST1  20 ms  ."MSP_reset,_"
+  THEN
+[ELSE] \ RESETuart=0:
+  1 uart! BSLPORT port!   4800 bps ' catch 0- drop IF drop ELSE evenParity THEN
+  0 uart! COM@ 1+ drop IF ( keep bps )   0 ELSE
+          BLDPORT port! 115200 bps ' catch THEN 0- drop
+  IF drop  1 uart! flushRX  ."Please_reset_MSP..._"
+  ELSE noParity  flushRX
+    RST0  10 ms  1 uart! flushRX  0 uart! flushRX
+    RST1  20 ms  ."MSP_reset,_"
+  THEN
+[THEN]
+  uart! \ restore current uart
+;
+: BSLRST  \ -- ; boot-rom: RST low, 2 falling-edges on TCK, then RST high
+  \ RST xxx_______________---------------------  BSLTX=P1.1>
+  \ TCK xxx---____----______----_______________  BSLRX=P2.2<
+  \ TMS xxx---------------------_______________
+  \          1^      2^   ^ bootloader starts at $0C00
+  COM 4+ @ 3& \ save current uart
+  [ RESETuart ] \ this drives RESET low twice:
+  [IF]   1 uart! BSLPORT port! 4800 bps evenParity
+  [ELSE] 0 uart! BLDPORT port! 115200 bps noParity
+  [THEN] flushRX
+  RST0 2 TIMES TCK1 1 ms TCK0 1 ms REPEAT RST1 1 ms TCK1 20 ms
+  uart!  flushRX \ restore current uart
+;
+
+: >PASS  \ -- ; unlock protected BSL functions with key=FFE0+20(IntVect)
+  \ RXpassword   >80>10>24>24>xx>xx>xx>xx>data00>data01...>data1F>CKL>CKH<ACK
+  "^@~^P$$____...:...|...:...|...:...|...:...|++"
+  over 8+ $FFE0 `@ swap $20 cmove  $90
+: BSLframe  \ @ # cc -- ; >$80 ... >CKL>CKH<cc
+  \ Sync sequence before every command (provides timings): >80<90
+  $80 TX RX $90- drop IF !"NAK!" ;THEN  5 ms \ send synchro and check ACK
+  \ Checksum CKH.CKL such that xor of odd bytes = xor of even bytes = 0
+  >r 2dup 0 swap 2/ 1- TIMES swap w@+ rot ^ REPEAT \ -- n
+  \ ROMbug: BSL computes the same (in $212) at each byte (received in $206):
+  \ 0FB4:  XOR.B $206 &, $212 (R9)  XOR 1 #, R9  \ with R9=0/1 normally.
+  \ But when receiving the checksum two bytes, R9=n instead of R9=0/1:
+  \ 0D3C: and 0E02:  MOV $212 &, R9  CALL $0F10 #  MOV $206 &, $212  CALL$0F10#
+  \ This messes the two bytes at $212+n !!!
+  $212 over+ .w ."\^=" ~ dup .w space  swap w! \ setup chksum
+  XSEND RX r> - drop IF !"unexpectedRX" THEN  \ send and chek answer
+;
+: >BLK  \ @ # -- ; RXdatablock  >80>12>N>N>AL>AH>N-4>00>d0...>dN-4>CKL>CKH<ACK
+  \ This command works only for RAM, it's broken for flash (see BSLframe)
+  tuck  2dup 16 << |  over 4+ $01010000* $1280+  \ -- # @ # AN NN
+  eob 8+ tuck! 4+ tuck! 4+  rot `@ -rot  place 8-  swap 10+  \ -- eob+8 #+10
+  $90 BSLframe
+;
+: <BLK  \ @ # -- ; TXdatablock  >80>14>04>04>AL>AH>N>00>CKL>CKH
+  2dup  \                       <80<xx<N<N<data1<data2...<dataN<CKL<CKH
+  16 << |  "^@~^T^D^D____++" -rot tuck 4+ ! swap $80 BSLframe
+  RX RX2 2drop  over `@ over XRECV  RX2 drop  bounds 2wdump
+;
+: >PC   \ @ -- ;   LoadPC       >80>1A>04>04>AL>AH>xx>xx>CKL>CKH<ACK
+  "^@~^Z^D^D____++"  >r over $1E84^ over 6+ w! tuck 4+ w! r> $90 BSLframe
+;
+: >PASSfixSP \ -- ;
+  \ BSL initializes SP anywhere between $21A and maxRAMaddress < $C00;
+  \ then >BLK may corrupt the return stack, or the last word loaded by >BLK
+  \ may be corrupted by the return stack, therefore setup SP=$21A is safer:
+  >PASS  $0C22 >PC \ see ROM at $0C22: requires second >PASS
+  >PASS
+;
+
+: >MER  \ -- ;     MassErase    >80>18>04>04>xx>xx>xx>xx>CKL>CKH  <ACK
+  ."Type_<Enter>_to_mass-erase,_or_any_other_key_to_cancel:"
+  key 13 = drop IF drop key THEN 10- drop IF !"Mass-erase_cancelled." ;THEN
+  0 "^@~^X^D^D__^D~^\++"   SKIP \ such that chksm n=0
+: >ERS  \ @ -- ;   EraseSegment >80>16>04>04>AL>AH>02>A5>CKL>CKH  <ACK
+  "^@~^V^D^D__^B%~++" SKIP
+: >ERI  \ @ -- ;   Ersmain|info >80>16>04>04>AL>AH>04>A5>CKL>CKH  <ACK
+  "^@~^V^D^D__^D%~++" THEN THEN  -rot tuck 4+ w! swap $90 BSLframe
+;
+
+: BRST` \ -- ; reset with current pass
+  ;` 1 uart! 4800 bps evenParity  BSLRST \ this drives RESET low a 3rd time.
+:^ MERPASS \ -- ; mass-erase flash, and use virgin pass
+  >MER  $FFE0 `@ $20  2dup eob 8+ place -rot  2dup $FF fill \ save&clear pass
+  >PASSfixSP  cmove ; \ use&restore pass
+>PASSfixSP ' MERPASS !^ \ default: use current pass (mass-erase: MERPASS ^^ ;)
+
+: ;BSLDUMP` \ @ -- ; upload and dump memory from @ (while no ROMbug-mess)
+  ;` BEGIN 16 2dup <BLK + stopdump? UNTIL drop
+;
+
+[THEN] \ BSL43
+
+
+[0] [IF] \ ============================================================
+
+: <ROM  \ -- ; dump ROM into rom43.bin
+  BSLRST >PASS  $0C00 $80 8 TIMES 2dup <BLK swap over+ swap REPEAT 2drop
+  "rom43.bin" openw ?ior  $0C00 `@ $400 ior@ write ior@ close 2drop
+;
+: @ROM  \ -- ; load rom43.bin into host memory image of MSP430
+  "rom43.bin" openr ?ior  $0C00 `@ $400 ior@ read ior@ close 2drop
+;
+
+\ The following source generates the same binary code as rom43.bin:
+
+  \ ------------------------------------------------------------------
+  \ RAM allocation:
+  \ 200: bitPeriod in MCLK cycles ($80:-________--- S=D0-6=0,D7=P=S=1)
+  \ 202: bitPeriod/2 - 35  to sample in middle of bit
+  \ 204: TXbuf, 205: TXbitCounter
+  \ 206: RXbuf, 207: RXbitCounter
+  \ 208: .0=parityAcc .1=passMismatch .2=passOK
+  \ 20a: frame header: 0a:$80 0b:cmd 0c:size1,size2 0e:AL,AH 10:NL,NH
+  \ 212: cheksum
+  \ 214-21a: CALLstack(3 words), SPini=21a
+
+  \ ------------------------------------------------------------------
+  \ ROM start:
+  $0C00 org               \ 0C00: 0C02             ROM reset vector
+  MOV $5A80 #, WDTCTL &&  \ 0C02: 40B2 5A80 0120
+  DINT                    \ 0C08: C232
+  \ setup SP
+  CMP $021A #, SP         \ 0C0A: 9031 021A
+  JLO $0C22 $             \ 0C0E: 2809             if SP u< 21a (var),
+  CMP $0C02 #, SP         \ 0C10: 9031 0C02
+  JHS $0C22 $             \ 0C14: 2C06             or SP u> C00 (ROM),
+  PUSH $A5B8 #            \ 0C16: 1230 A5B8
+  POP R5                  \ 0C1A: 4135
+  CMP $A5B8 #, R5         \ 0C1C: 9035 A5B8
+  JZ $0C26 $              \ 0C20: 2402             or SP not pointing in RAM,
+  MOV $021A #, SP         \ 0C22: 4031 021A        SP=21a
+
+  MOV.B $85 #, BCSCTL1 && \ 0C26: 40F2 0085 0057   BCSCTL1 = $85
+  MOV.B $80 #, DCOCTL &&  \ 0C2C: 40F2 0080 0056   DCOCTL = $80
+  BIS.B 2 #, P1OUT &&     \ 0C32: D3E2 0021        P1.1 = out
+  BIS.B 2 #, P1DIR &&     \ 0C36: D3E2 0022        P1.1 = 1
+  BIC.B 4 #, P2DIR &&     \ 0C3A: C2E2 002A        P2.2 = in
+  CLR.B $0208 &&          \ 0C3E: 43C2 0208        208.B = 0
+
+  \ ------------------------------------------------------------------------
+  \ receive command: 2.
+  CALL $0E2A #            \ 0C42: 12B0 0E2A     1. receive byte $80, reply ACK
+  CALL $0DBA #            \ 0C46: 12B0 0DBA     2. receive frame header
+  MOV.B $020B &, R5       \ 0C4A: 4255 020B
+  CMP.B $12 #, R5         \ 0C4E: 9075 0012
+  JZ $0D06 $              \ 0C52: 2459             if 20b == $12 -> RXdatablock
+  CMP.B $10 #, R5         \ 0C54: 9075 0010
+  JZ $0CDA $              \ 0C58: 2440             if 20b == $10 -> RXpassword
+  CMP.B $18 #, R5         \ 0C5A: 9075 0018
+  JZ $0C9C $              \ 0C5E: 241E             if 20b == $18 -> MassErase
+  CALL $0E02 #            \ 0C60: 12B0 0E02     2. recv checksum
+  BIT.B 4 #, $0208 &&     \ 0C64: B2E2 0208
+  JZ $0C8E $              \ 0C68: 2412          1. if 208.2 == 0 -> reply NAK
+  MOV.B $020B &, R5       \ 0C6A: 4255 020B
+  CMP.B $16 #, R5         \ 0C6E: 9075 0016
+  JZ $0CAC $              \ 0C72: 241C             if 20b == $16 -> ErasSegment
+  CMP.B $14 #, R5         \ 0C74: 9075 0014
+  JZ $0D76 $              \ 0C78: 247E             if 20b == $14 -> TXdatablock
+  CMP.B $1A #, R5         \ 0C7A: 9075 001A
+  JZ $0C94 $              \ 0C7E: 240A             if 20b == $1A -> LoadPC
+  CALL $0E84 #            \ 0C80: 12B0 0E84     1. reply $70=unsupportedCommand
+  JMP $0C42 $             \ 0C84: 3FDE             -> receive command
+
+  \ ------------------------------------------------------------------
+  \ reply ACK 1.
+  CALL $0E94 #            \ 0C86: 12B0 0E94     1. reply ACK
+  JMP $0C42 $             \ 0C8A: 3FDB             -> receive command
+
+  \ ------------------------------------------------------------------
+  \ pop caller and reply NAK
+  INCD SP                 \ 0C8C: 5321             SP += 2
+  \ ------------------------------------------------------------------
+  \ reply NAK 1.
+  CALL $0E8C #            \ 0C8E: 12B0 0E8C     1. reply NAK
+  JMP $0C42 $             \ 0C92: 3FD7             -> receive command
+
+  \ ------------------------------------------------------------------
+  \ LoadPC 1.       >80>1A>04>04>AL>AH>xx>xx>CKL>CKH<ACK
+  CALL $0E94 #            \ 0C94: 12B0 0E94     1. reply ACK
+  BR $020E &&             \ 0C98: 4210 020E        PC = *20e
+
+  \ ------------------------------------------------------------------
+  \ MassErase 2.    >80>18>04>04>xx>xx>xx>xx>CKL>CKH  <ACK
+  CALL $0E02 #            \ 0C9C: 12B0 0E02     2. recv checksum
+  MOV $1000 #, $020E &&   \ 0CA0: 40B2 1000 020E   20e = $1000
+  MOV $A506 #, $0210 &&   \ 0CA6: 40B2 A506 0210   210 = $A506
+
+  \ ------------------------------------------------------------------
+  \ EraseSegment 1. >80>16>04>04>AL>AH>02>A5>CKL>CKH  <ACK
+  BIT 1 #, FCTL3 &&       \ 0CAC: B392 012C
+  JNZ $0CAC $             \ 0CB0: 23FD             wait FCTL3.0 == 0
+  MOV $A500 #, FCTL3 &&   \ 0CB2: 40B2 A500 012C   FCTL3 = $A500
+  MOV $0210 &, FCTL1 &&   \ 0CB8: 4292 0210 0128   FCTL1 = *210
+  MOV $020E &, R6         \ 0CBE: 4216 020E
+  CLR 0 (R6)              \ 0CC2: 4386 0000        **20e = 0   start erase
+  BIT 1 #, FCTL3 &&       \ 0CC6: B392 012C
+  JNZ $0CC6 $             \ 0CCA: 23FD             wait FCTL3.0 == 0
+  MOV $A510 #, FCTL3 &&   \ 0CCC: 40B2 A510 012C   FCTL3 = $A510
+  MOV $A500 #, FCTL1 &&   \ 0CD2: 40B2 A500 0128   FCTL1 = $A500
+  JMP $0C86 $             \ 0CD8: 3FD6          1. reply ACK
+
+  \ -------------------------------------------------------------------------
+  \ RXpassword 2. >80>10>24>24>xx>xx>xx>xx>data01>data02...>data20>CKL>CKH<ACK
+  MOV $FFE0 #, R6         \ 0CDA: 4036 FFE0        R6 = IntVec
+  MOV $20 #, R7           \ 0CDE: 4037 0020        R7 = sizeof IntVec
+  \ comparison loop start:
+  CALL $0F10 #            \ 0CE2: 12B0 0F10     1. recv byte
+  CMP.B $0206 &, 0 (R6)   \ 0CE6: 92D6 0206 0000
+  JZ $0CF2 $              \ 0CEC: 2402             if 206 == *R6 -> 0CF2
+  BIS.B 2 #, $0208 &&     \ 0CEE: D3E2 0208        208.1 = 1  mismatch!
+  INC R6                  \ 0CF2: 5316             ++R6
+  DEC R7                  \ 0CF4: 8317
+  JNZ $0CE2 $             \ 0CF6: 23F5             if --R7 != 0 -> 0CE2
+  BIC.B 4 #, $0208 &&     \ 0CF8: C2E2 0208        208.2 = 0
+  CALL $0E02 #            \ 0CFC: 12B0 0E02     2. recv checksum
+  BIS.B 4 #, $0208 &&     \ 0D00: D2E2 0208        208.2 = 1
+  JMP $0C86 $             \ 0D04: 3FC0          1. reply ACK
+
+  \ -------------------------------------------------------------------
+  \ RXdatablock 2. >80>12>N>N>AL>AH>N-4>00>d0...>dN-4>CKL>CKH<ACK
+  MOV $020E &, R6         \ 0D06: 4216 020E        R6 = *20e
+  MOV $0210 &, R7         \ 0D0A: 4217 0210        R7 = *210
+  BIT.B 4 #, $0208 &&     \ 0D0E: B2E2 0208
+  JZ $0D68 $              \ 0D12: 242A             if 208.2 == 0 -> ignoreBlock
+  \ recvLoop:
+  CALL $0F10 #            \ 0D14: 12B0 0F10     1. recv byte (into *206)
+  CMP $1000 #, R6         \ 0D18: 9036 1000
+  JL $0D30 $              \ 0D1C: 3809             if R6 < $1000 -> recvNxtByte
+  BIT 1 #, FCTL3 &&       \ 0D1E: B392 012C
+  JNZ $0D1E $             \ 0D22: 23FD             wait FCTL3.0 == 0
+  MOV $A500 #, FCTL3 &&   \ 0D24: 40B2 A500 012C   FCTL3 = $A500
+  MOV $A540 #, FCTL1 &&   \ 0D2A: 40B2 A540 0128   FCTL1 = $A540
+  \ recvNextByte:
+  MOV.B $0206 &, 0 (R6)   \ 0D30: 42D6 0206 0000   *R6++ = *206
+  INC R6                  \ 0D36: 5316
+  DEC R7                  \ 0D38: 8317
+  JNZ $0D14 $             \ 0D3A: 23EC             if --R7 != 0 -> recvLoop
+  MOV $0212 &, R9         \ 0D3C: 4219 0212        R9 = *212 (chksm)
+  CALL $0F10 #            \ 0D40: 12B0 0F10     1. recv byte
+  \ !!!: in this call, at 0FB4:  XOR.B $206 &, $212 (R9)  XOR 1 #, R9
+  MOV.B $0206 &, $0212 && \ 0D44: 42D2 0206 0212   212.B = *206.B
+  CMP $1000 #, R6         \ 0D4A: 9036 1000
+  JL $0D56 $              \ 0D4E: 3803             if $1000 < R6 -> flashMess1
+  BIT 1 #, FCTL3 &&       \ 0D50: B392 012C
+  JNZ $0D50 $             \ 0D54: 23FD             wait FCTL3.0 == 0
+  \ flashMess1:
+  MOV $A510 #, FCTL3 &&   \ 0D56: 40B2 A510 012C   FCTL3 = $A510
+  MOV $A500 #, FCTL1 &&   \ 0D5C: 40B2 A500 0128   FCTL1 = $A500
+  CALL $0E10 #            \ 0D62: 12B0 0E10        flashMess2
+  JMP $0C86 $             \ 0D66: 3F8F          1. reply ACK
+  \ ignoreBlock: receive and ignore datablock
+  CALL $0F10 #            \ 0D68: 12B0 0F10     1. recv byte
+  DEC R7                  \ 0D6C: 8317
+  JNZ $0D68 $             \ 0D6E: 23FC             if --R7 != 0 -> ignoreBlock
+  CALL $0E02 #            \ 0D70: 12B0 0E02     2. recv checksum
+  JMP $0C8E $             \ 0D74: 3F8C          1. reply NAK
+
+  \ -----------------------------------------------------------------
+  \ TXdatablock 2. >80>14>04>04>AL>AH>N>00>CKL>CKH
+  \                <80<xx<N<N<data1<data2...<dataN<CKL<CKH
+  MOV $80 #, $020A &&     \ 0D76: 40B2 0080 020A   20a = $80
+  MOV.B $0210 &, $020C && \ 0D7C: 42D2 0210 020C   20c.B = *210.B  size1=NL
+  MOV.B $0210 &, $020D && \ 0D82: 42D2 0210 020D   20d.B = *210.B  size2=NL
+  CALL $0DE4 #            \ 0D88: 12B0 0DE4     2. send header
+  MOV $020E &, R6         \ 0D8C: 4216 020E        R6 = *20e   AL,AH
+  MOV $0210 &, R7         \ 0D90: 4217 0210        R7 = *210   NL,NH
+  \ sendLoop:
+  MOV.B @R6+, $0204 &&    \ 0D94: 46F2 0204        204 = *R6++
+  CALL $0E9A #            \ 0D98: 12B0 0E9A     1. send byte
+  DEC R7                  \ 0D9C: 8317
+  JNZ $0D94 $             \ 0D9E: 23FA             if --R7 != 0 -> sendLoop
+  INV $0212 &&            \ 0DA0: E3B2 0212        complement checksum
+  MOV.B $0212 &, $0204 && \ 0DA4: 42D2 0212 0204   204 = CKL
+  CALL $0E9A #            \ 0DAA: 12B0 0E9A     1. send byte
+  MOV.B $0213 &, $0204 && \ 0DAE: 42D2 0213 0204   204 = CKH
+  CALL $0E9A #            \ 0DB4: 12B0 0E9A     1. send byte
+  JMP $0C42 $             \ 0DB8: 3F44             -> receive command
+
+  \ ---------------------------------------------------------------
+  \ receive frame header: 8 bytes from 20a 1.
+  \ 20a:$80 20b:type 20c:size1 20d:size2 20e:AL,AH 210:NL,NH
+  CLR $0212 &&            \ 0DBA: 4382 0212        212 = 0
+  CLR R9                  \ 0DBE: 4309             R9 = 0
+  BIC.B 2 #, $0208 &&     \ 0DC0: C3E2 0208        208.1 = 0
+  MOV $020A #, R6         \ 0DC4: 4036 020A        R6 = 20a
+  MOV 8 #, R7             \ 0DC8: 4237             R7 = 8
+  \ receive loop:
+  CALL $0F10 #            \ 0DCA: 12B0 0F10     1. recv byte
+  MOV.B $0206 &, 0 (R6)   \ 0DCE: 42D6 0206 0000   *R6++ = *206
+  INC R6                  \ 0DD4: 5316
+  DEC R7                  \ 0DD6: 8317
+  JNZ $0DCA $             \ 0DD8: 23F8             if --R7 == 0 -> 0DCA
+  CMP.B $020C &, $020D && \ 0DDA: 92D2 020C 020D
+  JNZ $0C8C $             \ 0DE0: 2355             if 20C.B != 20D.B -> NAK
+  RET                     \ 0DE2: 4130             ;
+
+  \ ---------------------------------------------------------------
+  \ send header: 1.
+  CLR $0212 &&            \ 0DE4: 4382 0212        212 = 0
+  CLR R9                  \ 0DE8: 4309             R9 = 0
+  BIC.B 2 #, $0208 &&     \ 0DEA: C3E2 0208        208.1 = 0
+  MOV $020A #, R6         \ 0DEE: 4036 020A        R6 = 20a
+  MOV 4 #, R7             \ 0DF2: 4227             R7 = 4
+  \ sendLoop:
+  MOV.B @R6+, $0204 &&    \ 0DF4: 46F2 0204        204 = *R6++
+  CALL $0E9A #            \ 0DF8: 12B0 0E9A     1. send byte
+  DEC R7                  \ 0DFC: 8317
+  JNZ $0DF4 $             \ 0DFE: 23FA             if --R7 !=0 -> sendLoop
+  RET                     \ 0E00: 4130             ;
+
+  \ ---------------------------------------------------------------
+  \ receive and check checksum: 1.
+  MOV $0212 &, R9         \ 0E02: 4219 0212        R9 = *212 (chksm)
+  CALL $0F10 #            \ 0E06: 12B0 0F10     1. recv byte
+  \ !!!: in this call, at 0FB4:  XOR.B $206 &, $212 (R9)  XOR 1 #, R9
+  MOV.B $0206 &, $0212 && \ 0E0A: 42D2 0206 0212   212.B = *206.B  CKL
+  \ flashMess2:
+  CALL $0F10 #            \ 0E10: 12B0 0F10     1. recv byte
+  \ !!!: in this call, at 0FB4:  XOR.B $206 &, $212 (R9)  XOR 1 #, R9
+  MOV.B $0206 &, $0213 && \ 0E14: 42D2 0206 0213   213.B = *206.B  CKH
+  INV R9                  \ 0E1A: E339             complement R9
+  CMP $0212 &, R9         \ 0E1C: 9219 0212
+  JNZ $0C8C $             \ 0E20: 2335             if 212 != R9 -> NAK
+  BIT.B 2 #, $0208 &&     \ 0E22: B3E2 0208
+  JNZ $0C8C $             \ 0E26: 2332             if 208.1 != 0 -> NAK
+  RET                     \ 0E28: 4130             ;
+
+  \ -------------------------------------------------------------------
+  \ receive byte $80, reply ACK: 0.
+  BIT.B 4 #, P2IN &&      \ 0E2A: B2E2 0028
+  JZ $0E2A $              \ 0E2E: 27FD             wait P2.2=1
+  BIT.B 4 #, P2IN &&      \ 0E30: B2E2 0028
+  JNZ $0E30 $             \ 0E34: 23FD             wait P2.2=0
+  MOV $0224 #, TACTL &&   \ 0E36: 40B2 0224 0160   MCLK,freerun,clear TimerA
+  BIT.B 4 #, P2IN &&      \ 0E3C: B2E2 0028
+  JZ $0E3C $              \ 0E40: 27FD             wait P2.2=1
+  MOV TAR &, R5           \ 0E42: 4215 0170        R5 = low pulse duration
+  RRA R5                  \ 0E46: 1105
+  RRA R5                  \ 0E48: 1105
+  RRA R5                  \ 0E4A: 1105
+  MOV R5, $0200 &&        \ 0E4C: 4582 0200        200 = R5/8
+  RRA R5                  \ 0E50: 1105
+  MOV R5, $0202 &&        \ 0E52: 4582 0202     
+  SUB $23 #, $0202 &&     \ 0E56: 80B2 0023 0202   202 = R5/16 - 35
+  RRA R5                  \ 0E5C: 1105
+  RRA R5                  \ 0E5E: 1105
+  RRA R5                  \ 0E60: 1105
+  RRA R5                  \ 0E62: 1105
+  ADD $A540 #, R5         \ 0E64: 5035 A540
+  MOV R5, FCTL2 &&        \ 0E68: 4582 012A        FCTL2 = R5/256 + $A540
+  MOV $0A #, R5           \ 0E6C: 4035 000A        wait 10 TimerA ticks
+
+  \ wait R5 TimerA ticks
+  MOV $0224 #, TACTL &&   \ 0E70: 40B2 0224 0160   MCLK,freerun,clear TimerA
+  CMP TAR &, $0200 &&     \ 0E76: 9292 0170 0200
+  JC $0E76 $              \ 0E7C: 2FFC             wait TAR >= *200
+  DEC R5                  \ 0E7E: 8315
+  JNZ $0E70 $             \ 0E80: 23F7             until --R5==0
+  JMP $0E94 $             \ 0E82: 3C08          0. reply ACK
+  \ -----------------------------------------------------------------
+  \ reply $70=unsupportedCommand: 0.
+  MOV.B $70 #, $0204 &&   \ 0E84: 40F2 0070 0204   204.B = $70
+  JMP $0E9A $             \ 0E8A: 3C07          0. send byte
+  \ -----------------------------------------------------------------
+  \ reply NAK: 0.
+  MOV.B $A0 #, $0204 &&   \ 0E8C: 40F2 00A0 0204   204.B = $A0  'NAK'
+  JMP $0E9A $             \ 0E92: 3C03          0. send byte
+  \ -----------------------------------------------------------------
+  \ reply ACK: 0.
+  MOV.B $90 #, $0204 &&   \ 0E94: 40F2 0090 0204   204.B = $90  'ACK'
+
+  \ -----------------------------------------------------------------
+  \ send byte: (uses R5, R9) 0.
+  MOV.B 0 #, $0205 &&     \ 0E9A: 43C2 0205        205.B = 0
+  XOR.B $204 &, $212 (R9) \ 0E9E: E2D9 0204 0212   212[R9].B ^= *204.B
+  XOR 1 #, R9             \ 0EA4: E319             toggle R9.0
+  BIC.B 1 #, $0208 &&     \ 0EA6: C3D2 0208        208.0 = 0
+  \ sendNextBit
+  MOV.B $0205 &, R5       \ 0EAA: 4255 0205
+  MOV.B $0EB4 (R5), R5    \ 0EAE: 4555 0EB4
+  ADD R5, PC              \ 0EB2: 5500             JMP EB4[205.B]
+                          \ 0EB4: 0C 30 30 30 30 30 30 30 30 1A 3A 3A
+                          \ 0Exx= C0 E4 E4 E4 E4 E4 E4 E4 E4 CE EE EE
+  \ send startBit:
+  MOV TAR &, TACCR0 &&    \ 0EC0: 4292 0170 0172
+  ADD $0C #, TACCR0 &&    \ 0EC6: 50B2 000C 0172   TACCR0 = TAR + 12
+  JMP $0EDE $             \ 0ECC: 3C08
+  \ send parityBit:
+  BIT.B 1 #, $0208 &&     \ 0ECE: B3D2 0208
+  JNZ $0EEE $             \ 0ED2: 200D             if 208.0 == 1 -> 0EEE
+  BIC 1 #, TACCTL0 &&     \ 0ED4: C392 0162        TACCTL0.0 = 0
+  BIT 1 #, TACCTL0 &&     \ 0ED8: B392 0162
+  JZ $0ED8 $              \ 0EDC: 27FD             wait TACCTL0.0 == 1
+  BIC.B 2 #, P1OUT &&     \ 0EDE: C3E2 0021        P1.1 = 0
+  JMP $0EFC $             \ 0EE2: 3C0C
+  \ send dataBit:
+  RRA.B $0204 &&          \ 0EE4: 1152 0204        204.B >>= 1
+  JNC $0ED4 $             \ 0EE8: 2BF5             if 204.B was odd -> 0ED4
+  XOR.B 1 #, $0208 &&     \ 0EEA: E3D2 0208        toggle 208.0
+  \ send stopBit:
+  BIC 1 #, TACCTL0 &&     \ 0EEE: C392 0162        TACCTL0.0 = 0
+  BIT 1 #, TACCTL0 &&     \ 0EF2: B392 0162
+  JZ $0EF2 $              \ 0EF6: 27FD             wait TACCTL.0 == 1
+  BIS.B 2 #, P1OUT &&     \ 0EF8: D3E2 0021        P1.1 = 1
+  \ send bit loop test
+  ADD $0200 &, TACCR0 &&  \ 0EFC: 5292 0200 0172   TACCR0 += *200
+  INC.B $0205 &&          \ 0F02: 53D2 0205
+  CMP.B $0C #, $0205 $    \ 0F06: 90F0 000C F2FB
+  JNZ $0EAA $             \ 0F0C: 23CE             until ++205.B == 12
+  RET                     \ 0F0E: 4130             ;
+
+  \ -----------------------------------------------------------------
+  \ receive byte: (uses R5, R9) 0.
+  CLR.B $0207 &&          \ 0F10: 43C2 0207        207.B = 0
+  BIC.B 1 #, $0208 &&     \ 0F14: C3D2 0208        208.0 = 0
+
+  MOV.B $0207 &, R5       \ 0F18: 4255 0207
+  MOV.B $0F22 (R5), R5    \ 0F1C: 4555 0F22
+  ADD R5, PC              \ 0F20: 5500             JMP F22[207.B]
+                          \ 0F22: 0C 5A 5A 5A 5A 5A 5A 5A 5A 3A 7E 00
+                          \ 0Fxx: 2E 7C 7C 7C 7C 7C 7C 7C 7C 5C A0 --
+  \ recv startBit:
+  BIT.B 4 #, P2IN &&      \ 0F2E: B2E2 0028
+  JNZ $0F2E $             \ 0F32: 23FD             wait P2.2 == 0
+  MOV TAR &, TACCR0 &&    \ 0F34: 4292 0170 0172
+  ADD $0202 &, TACCR0 &&  \ 0F3A: 5292 0202 0172   TACCR0 = TAR + *202
+  BIC 1 #, TACCTL0 &&     \ 0F40: C392 0162        TACCTL0.0 = 0
+  BIT 1 #, TACCTL0 &&     \ 0F44: B392 0162
+  JZ $0F44 $              \ 0F48: 27FD             wait TACCTL0.0 == 1
+  BIT.B 4 #, P2IN &&      \ 0F4A: B2E2 0028        (C = NZ)
+  JNC $0F94 $             \ 0F4E: 2822             if P2.2 == 0 -> 0F94
+  BIS.B 2 #, $0208 &&     \ 0F50: D3E2 0208        208.1 = 1
+  JMP $0F94 $             \ 0F54: 3C1F
+  \ recv null bit (C=0)
+  RRC.B $0206 &&          \ 0F56: 1052 0206        206.B = *206.B/2
+  JMP $0F94 $             \ 0F5A: 3C1C
+  \ recv parityBit:
+  BIC 1 #, TACCTL0 &&     \ 0F5C: C392 0162        TACCTL0.0 = 0
+  BIT 1 #, TACCTL0 &&     \ 0F60: B392 0162
+  JZ $0F60 $              \ 0F64: 27FD             wait TACCTL0.0 == 1
+  BIT.B 4 #, P2IN &&      \ 0F66: B2E2 0028        (C = NZ)
+  JNC $0F70 $             \ 0F6A: 2802             if P2.2 == 0 -> 0F70
+  XOR.B 1 #, $0208 &&     \ 0F6C: E3D2 0208        toggle 208.0
+  BIT.B 1 #, $0208 &&     \ 0F70: B3D2 0208
+  JZ $0F94 $              \ 0F74: 240F             if 208.0 == 0 -> 0F94
+  BIS.B 2 #, $0208 &&     \ 0F76: D3E2 0208        208.1 = 1
+  JMP $0F94 $             \ 0F7A: 3C0C
+  \ recv dataBit:
+  BIC 1 #, TACCTL0 &&     \ 0F7C: C392 0162        TACCTL0.0 = 0
+  BIT 1 #, TACCTL0 &&     \ 0F80: B392 0162
+  JZ $0F80 $              \ 0F84: 27FD             wait TACCTL0 == 1
+  BIT.B 4 #, P2IN &&      \ 0F86: B2E2 0028        (C = NZ)
+  JNC $0F56 $             \ 0F8A: 2BE5             if P2.2 == 0 -> 0F56
+  RRC.B $0206 &&          \ 0F8C: 1052 0206        206.B = $80 + *206.B/2
+  XOR.B 1 #, $0208 &&     \ 0F90: E3D2 0208        toggle 208.0
+  \ recv bit loop test
+  ADD $0200 &, TACCR0 &&  \ 0F94: 5292 0200 0172   TACCR0 += *200
+  INC.B $0207 &&          \ 0F9A: 53D2 0207        207.B += 1
+  JMP $0F18 $             \ 0F9E: 3FBC
+  \ recv stopBit:
+  BIC 1 #, TACCTL0 &&     \ 0FA0: C392 0162        TACCTL0.0 = 0
+  BIT 1 #, TACCTL0 &&     \ 0FA4: B392 0162
+  JZ $0FA4 $              \ 0FA8: 27FD             wait TACCTL0.0 == 1
+  BIT.B 4 #, P2IN &&      \ 0FAA: B2E2 0028        (C = NZ)
+  JC $0FB4 $              \ 0FAE: 2C02             if P2.2 != 0 -> 0FB4
+  BIS.B 2 #, $0208 &&     \ 0FB0: D3E2 0208        208.1 = 1
+  XOR.B $206 &, $212 (R9) \ 0FB4: E2D9 0206 0212   212[R9] ^= *206
+  XOR 1 #, R9             \ 0FBA: E319             toggle R9.0
+  RET                     \ 0FBC: 4130             ;
+
+  \ 0FBE:                                      FFFF
+  \ 0FC0:  FFFF FFFF FFFF FFFF  FFFF FFFF FFFF FFFF
+  \ 0FD0:  FFFF FFFF FFFF FFFF  FFFF FFFF FFFF FFFF
+  \ 0FE0:  FFFF FFFF FFFF FFFF  FFFF FFFF FFFF FFFF
+  \ 0FF0:  49F1 4300 0000 0000  0000 1001 0000 1AF0
+  \        ^^^^ MSP430Fxxx family =FLASH(K)+RAM(K)
+  \        12F1: F110=1+/8 F111=2+/8 F112=4+/4
+  \        13F2: F210=1+/8 F211=2+/8 F212=4+/4 F213=8+/4
+  \        13F4: F412=4+/4 F413=8+/4 F415=16+/2 F417=32+1
+  \        23F1: F122=4+/4 F123=8+/4
+  \        27F4: F423=8+/4 F425=16+/2 F427=32+1
+  \        3211: F1122=4+/4 F1132=8+/4
+  \        3212: F1222=4+/4 F1232=8+/4
+  \        37F4: F435=16+/2 F436=24+1 F437=32+1 (80pins, 49F4:100pins)
+  \        39F4: F438=48+1 F439=60+2
+  \        49F1: F133=8+/4 F135=16+/2 F147=32+1 F148=48+2 F149=60+2
+  \        49F4: F435=16+/2 F436=24+1 F437=32+1 F447=32+1 F448=48+2 F449=60+2
+  \        69F1: F155=16+/2 F156=24+1 F157=32+1 F167=32+1 F168=48+2 F169=60+2
+  \        6CF1: F1610=32+/2 F1611=48+1 F1612=55+/2
+
+  \ ROM end.
+  \ ------------------------------------------------------------------
+
+[THEN] \ =============================================================
+
+\ --------------------------------------------------------------------
+[1] [IF] ."+_BLD43_-_MSP430_RAM_Boot-LoaDer^J"
+
+\ --------------------------------------
+\ FreeForth serial monitor: host PC part
+
+: _load  \ @ # -- ; host-side loader: #even=PC>MSP #odd=PC<MSP
+  utrace@ 0- drop IF cr THEN
+  RX drop  \ sync
+  over TX2  dup TX2  0- 0= IF 2drop ;THEN \ execute
+  dup 2/ swap 1& drop 0= IF TIMES dup _@ TX2 2+ REPEAT drop ;THEN \ download
+  TIMES RX2 over `@ w! 2+ REPEAT drop \ upload (changed-marks untouched)
+;
+: _check \ @ # -- ; from @ for # bytes compare MSP memory and its host mirror
+  utrace@ 0- drop IF cr THEN
+  RX drop  \ sync
+  over TX2  1| dup TX2  swap `@ swap 2/
+  TIMES w@+ RX2 <> IF >r over cr .w .":" dup .w ."-" r .w r> THEN 2drop
+  REPEAT drop
+;
+: _serExec  _load ' .changed !^ .all`  0 _load ;  \ @ --
+  _serExec ' _execute !^ ;
+
+: .MSP` \ -- ; get from ROM and display MSP430 family
+  $0FF0 dup 3 _load _@ \ -- n ; PC<MSP ROM@0FF0:n
+  ."MSP430_family:_0FF0:" dup .b ."." flip dup .b ."(Kflash+Kram):_"
+  $F112 CASE ."F110=1+/8_F111=2+/8_F112=4+/4" ;THEN
+  $F213 CASE ."F210=1+/8_F211=2+/8_F212=4+/4_F213=8+/4" ;THEN
+  $F413 CASE ."F412=4+/4_F413=8+/4_F415=16+/2_F417=32+1" ;THEN
+  $F123 CASE ."F122=4+/4_F123=8+/4" ;THEN
+  $F427 CASE ."F423=8+/4_F425=16+/2_F427=32+1" ;THEN
+  $1132 CASE ."F1122=4+/4_F1132=8+/4" ;THEN
+  $1232 CASE ."F1222=4+/4_F1232=8+/4" ;THEN
+  $F437 CASE ."F435=16+/2_F436=24+1_F437=32+1_(80pins,_49F4:100pins)" ;THEN
+  $F439 CASE ."F438=48+1_F439=60+2" ;THEN
+  $F149 CASE ."F133=8+/4_F135=16+/2_F147=32+1_F148=48+2_F149=60+2" ;THEN
+  $F449 CASE ."F435=16+/2_F436=24+1_F437=32+1_F447=32+1_F448=48+2_F449=60+2" ;THEN
+  $F169 CASE ."F155=16+/2_F156=24+1_F157=32+1_F167=32+1_F168=48+2_F169=60+2" ;THEN
+  $F16C CASE ."F1610=32+/2_F1611=48+1_F1612=55+/2" ;THEN
+  ."unknown" drop
+;
+
+\ -------------------------------------
+\ FreeForth serial monitor: MSP430 part
+
+\ BLD43 testing steps: (after the BSL43 testing steps above)
+\   use RRST to BSLreset the MSP and BSLdownload and launch the monitor in ram;
+\ - setup [BSL]=1: the monitor uses the ROM-BSL `RX and `TX at 4800bpsEven;
+\   interactivity is limited by the ROM-BSL bug, which displays XXXX^=YYYY:
+\   check that XXXX is off ram code and data (XXXX>=$0A00 is always safe);
+\   but it's enough to setup and test UART1 at 4800bpsEven/ACLK
+\ - then setup [BSL]=0: the monitor uses the hardware UART1 `RX and `TX;
+\ - setup UART1=4800bpsEven/ACLK, independent of SMCLK, comment "CALL`DCO4M#"
+\   and test `TUNEDCO upto 4MHz, checking SMCLK output on P1.4 (or P5.5)
+\ - setup UART1=115200pbs/SMCLK, uncomment "CALL`DCO4M#", and test monitor
+\ - uncomment([1]) this file's FLD43 section, and continue testing there.
+
+1 constant [RAMBSL]` \ 1:RAMBSL 0:see [BSL]`
+0 constant [BSL]` \ 1:with BSL software UART, 0:with hardware UART
+
+\ MOV $21A #, SP \ 4/ 200-21A=13words, firewall=3words upto 220=BSLORG
+[~] BSLORG [IF]  $220 equ BSLORG  [THEN]  BSLORG org
+
+[RAMBSL] [IF] \ RAMBSL software UART -----------------------------------
+
+\ Soft UART polling BSLTX=P1.1/P2.2=BSLRX at 115200bps (DINT required!)
+  109 equ SMCLK/ACLK \ 32768*109= 3'571'712 /31=115216:  31 cycles per bit
+  $A589 equ fctl2  \ c0FSSEL=SMCLK 3fFN=/10(3'571'712/350K=10)
+  \ 3'571'721/257K=13.9  3'571'721/476K=7.5  [8..13]  10->357K in [257K..476K]
+  \ 4'194'304/257K=16.3  4'194'304/476K=8.8  [9..16]  10->419K in [257K..476K]
+
+[1] [IF] \ on MSP with 256 bytes ram, this must be executed separately:
+BSLORG org
+A: `TUNEDCO \ 0.130/ uses R5 (see slaa336 code example)
+  \ DINT  MOV $5A80 #, WDTCTL && \ 80WDTHOLD=stop  already done by ROMBSL
+  \ ROMBSL also initializes BCSCTL1=$85 DCOCTL=$80 TACTL=$0224 and uses TACCR0
+  MOV.B $20 #, P2SEL &&   \ 6/ Rosc
+  MOV.B $B7 #, BCSCTL1 && \ 6/ 80XT2OFF 40XTS=slow 30DIVA=ACLK/8 7RSEL=max
+\ MOV.B $8B #, DCOCTL &&  \ 32768*109 = 3'571'712Hz
+  MOV $5100 #, TACCTL2 && \ 6/ c000CM=_- 3000CCIS=ACLK 100CAP=capture 1CCIFG
+\ @BEGIN  BIT 1 #, TACCTL2 &&  C? @UNTIL \ 6/ wait 1st edge
+  @BEGIN  MOV TACCR2 &, R5 \ 4/ R5=TACCR2 when last ACLK rising edge
+    BIC 1 #, TACCTL2 &&  @BEGIN  BIT 1 #, TACCTL2 &&  C? @UNTIL \ 10/
+    SUB TACCR2 &, R5  ADD SMCLK/ACLK 8* #, R5 \ 8/ R5=ref-deltaTACCR0
+  GE? @IF  RRA R5  NZ? @WHILE \ 6/ DCO can be off by 1 for a tolerance
+    INC.B DCOCTL &&  C? @TILL \ 6/ DCO.MOD carry out to RSEL
+    CMP.B $B7 #, BCSCTL1 &&  NZ? @IF  INC.B BCSCTL1 &&  @AGAIN \ 14/
+    DEC.B DCOCTL && \ 4/ fastest
+  @BREAK \ 2/
+    DEC.B DCOCTL &&  NC? @TILL \ 6/ DCO.MOD borrow out to RSEL
+    CMP.B $B0 #, BCSCTL1 &&  NZ? @IF  DEC.B BCSCTL1 &&  @AGAIN \ 14/
+    INC.B DCOCTL && \ 4/ slowest
+  @END
+  BIC.B $30 #, BCSCTL1 && \ 6/ 30DIVA=ACLK/1
+  MOV.B BCSCTL1 &, $21A &&  MOV.B DCOCTL &, $21B && \ 12/ save tuned values
+  MOV.B $85 #, BCSCTL1 &&  MOV.B $80 #, DCOCTL && \ 12/ restore BSL defaults
+  BR $0C42 # \ 4/ return into ROMBSL
+\ `DCOCOPY saves `TUNEDCO code overlay overwritten by `BOOT code overlay:
+_p@ BSLORG- equ `DCOSIZE
+create `DCOCOPY `DCOSIZE allot ;  BSLORG `@ `DCOCOPY `DCOSIZE cmove
+BSLORG org
+[THEN]
+
+A: `URX \ -- R4=c ; 0.32/278 (margin=310-278=32)
+  @BEGIN  BIT BSLRX  C? @UNTIL \ 6/6* wait line idle--
+  @BEGIN  BIT BSLRX  Z? @UNTIL \ 6/6* wait start bit-_
+  MOV $F0FF #, R4 \ 4/2
+  @BEGIN  ADD $3000 #, R4  C? @TILL \ 6/4* R4=$20FF
+  \ first iteration: 6+2+4+3=15 wait half bit
+  \ next iterations: 4+4*6+3=31 wait full bit
+  BIT BSLRX  RRC.B R4  NC? @UNTIL \ 8/3+4 sample bit, 1st=start=0
+  \ stopBit detection commented out to save 28 cycles:
+  \ @BEGIN  ADD $3000 #, R4  C? @UNTIL \ 6/4*6=24 wait full bit
+  \ BIT BSLRX \ 4/4 C/NZ=goodStopBit Z/NC=badStopBit
+  RET
+A: `URX2  \ -- R4=w R7 ; 1.16/620+ receive word, LSByte1st
+  CALL `URX #  MOV R4, R7  CALL `URX #  SWPB R4  ADD R7, R4  RET
+A: `UTX2 \ R4=w -- R7=0 ; 1.4/639 send word, LSByte1st
+  CALL _p@ 2+ # \ fall thru:
+A: `UTX \ R4=c -- R7=0 ; 0.38/317
+  MOV.B R4, R7  SWPB R4  BIS $300 #, R7  CLRC \ 10/5 insert stop and start bits
+  @BEGIN  C? @IF \ 2/2 iteration1:C=0(startBit), iteration10:C=1(stopBit)
+    BIS BSLTX  @ELSE  BIC BSLTX  @ELSE \ 12/6 same timing for both branches
+  @THEN  @BEGIN  NOP  ADD $4000 #, R7  C? @UNTIL \ 8/5*4
+  RRA R7  Z? @UNTIL \ 4/3 shift out LSBit1st, stop bit last, iteration10:Z=1
+  RET
+
+A: `BOOT \ -- ; to be launched by ROMBSL
+  MOV.B $21A &, BCSCTL1 &&  MOV.B $21B &, DCOCTL && \ 12/ `TUNEDCO saved values
+  \ fall thru into `UMON:
+
+[ELSE] \ ROMBSL -------------------------------
+
+A: `INIBIO  \ @SP=@ -- ; 14/ CALL iniBIO #  {addr,value,}* IE1,ie1
+  POP R4  @BEGIN  MOV.B @R4+, R5  MOV.B @R4+, 0 (R5)  CMP IE1 #, R5  Z? @UNTIL
+  BR R4  \ proceed after {IE1,ie1} list-end marker
+\ A: `INIWIO  \ @SP=@ -- ; 16/ CALL iniWIO #  {addr,value,}* $01FE,$0000
+\   POP R4  @BEGIN  MOV @R4+, R5  MOV @R4+, 0 (R5)  CMP $01FE #, R5  Z? @UNTIL
+\   BR R4 \ proceed after {$01FE,$0000} list-end marker
+
+A: `DCO4M  MOV 1024 #, R4  \ SMCLK=4'194'304Hz(= 1024 * 327678/8)   3.R4:5
+   $A58B equ fctl2  \ c0FSSEL=SMCLK 3fFN=/12(4194304/12=349525)
+A: `TUNEDCO \ R4=SMCLK/(ACLK/8) -- ; 3.140/ uses R5 (see slaa336 code example)
+  PUSH TACTL &&  PUSH TACCTL2 &&  PUSH.B BCSCTL1 && \ save modified IOregs
+  BIS.B $B0 #, BCSCTL1 && \ 80XT2OFF=off 40XTS=slow 30DIVA=ACLK/8 7RSEL=same
+  MOV $5100 #, TACCTL2 && \ C000CM=4000_- 3000CCIS=1000ACLK 100CAP=100capture
+  MOV $0224 #, TACTL &&   \ 300TASSEL=200SMCLK 30MC=20cont 4TACLR=4clear
+  @BEGIN  BIT 1 #, TACCTL2 &&  NZ? @UNTIL  BIC 1 #, TACCTL2 && \ wait 1st edge
+  @BEGIN  MOV TACCR2 &, R5 \ R5=TACCR2 when last ACLK rising edge
+    @BEGIN  BIT 1 #, TACCTL2 &&  NZ? @UNTIL  BIC 1 #, TACCTL2 && \ 1CCIFG
+    SUB TACCR2 &, R5  ADD R4, R5 \ R5=R4-deltaTACCR2
+  GE? @IF  RRA R5  NZ? @WHILE \ DCO can be off by 1 for a tolerance
+    INC.B DCOCTL &&  C? @TILL \ DCO.MOD carry out to RSEL
+    CMP.B $B7 #, BCSCTL1 &&  NZ? @IF  INC.B BCSCTL1 &&  @AGAIN
+    DEC.B DCOCTL && \ fastest
+  @BREAK
+    DEC.B DCOCTL &&  NC? @TILL \ DCO.MOD borrow out to RSEL
+    CMP.B $B0 #, BCSCTL1 &&  NZ? @IF  DEC.B BCSCTL1 &&  @AGAIN
+    INC.B DCOCTL && \ slowest
+  @END
+  POP R5  AND $F8 #, R5 \ R5=savedBCSCTL1 with RSEL=0
+  BIC.B $F8 #, BCSCTL1 &&  BIS.B R5, BCSCTL1 && \ restore non-RSEL bits
+  POP TACCTL2 &&  POP TACTL && \ restore TACCTL2 and TACTL
+RET
+
+[BSL] [IF]  \ with BSL software UART -----------------
+
+A: `URX \ -- R4=c ; CALL$F10 uses R5,R9, returns received byte in $206
+  PUSH R5  CALL $F10 #  POP R5  MOV.B $206 &, R4  RET
+A: `UTX \ R4=c -- ; CALL$E9A uses R5,R9, gets byte to send in $204
+  MOV.B R4, $204 &&  PUSH R5  CALL $E9A #  POP R5  RET
+
+[ELSE]  \ with hardware UART -------------------------
+
+                   @BEGIN  \ IDLE
+A: `URX \ -- R4=c ; waits until UART receiver ready, then returns c
+  BIT URXIFG1  NZ? @UNTIL  MOV.B U1RXBUF &, R4  RET
+                   @BEGIN  \ IDLE
+A: `UTX \ R4=c -- ; waits until UART transmitter ready, then sends c
+  BIT UTXIFG1  NZ? @UNTIL  MOV.B R4, U1TXBUF &&  RET
+
+[THEN]  \ BSL software UART or hardware UART ---------
+
+A: `UTX2 \ R4=w -- ; 8/ send word, LSByte1st
+  CALL `UTX #  SWPB R4  JMP `UTX $
+A: `URX2  \ -- R4=w ; 16/ receive word, LSByte1st
+  CALL `URX #  PUSH R4  CALL `URX #  SWPB R4  ADD @SP+, R4  RET
+
+A: `BOOT \ -- ; DINT and disableWDT already done by ROMBSL
+[BSL] [IF]
+  MOV $220 #, SP \ 214-220=6words
+[ELSE]
+  MOV $21A #, SP \ 200-21A=13words
+[THEN]
+  CALL `INIBIO #
+  P2SEL  $20'00+ _, \               Rosc
+  P3SEL  $C0'00+ _, \ .7=URXD1 .6=UTXD1
+[0] [IF] \ UART 4800bps evenParity / ACLK=32K
+  U1CTL  $D1'00+ _, \ PENA=1 PEV=1 SPB=0 CHAR=1 Listen=0 SYNC=0 MM=0 SWRST=1
+  U1RCTL $00'00+ _, \ 8URXEIE=0 4URXWIE=0
+  U1TCTL $10'00+ _, \ 30SSEL=ACLK 8URXSE=0 ------------> try URXSE=1
+  U1BR1  $00'00+ _, \ 32768/4800=6.83 -9/11% (UG13.16)
+  U1BR0  $06'00+ _,
+  U1MCTL $6F'00+ _,
+  ME2    $30'00+ _, \ 20UTXE1=ena 10URXE1=ena
+  U1CTL  $D0'00+ _, \ PENA=1 PEV=1 SP=0 CHAR=1 Listen=0 SYNC=0 MM=0 SWRST=0
+[ELSE] \ UART 115200bps noParity / SMCLK=4MHz
+  U1CTL  $11'00+ _, \ PENA=0 PEV=0 SP=0 CHAR=1 Listen=0 SYNC=0 MM=0 SWRST=1
+  U1RCTL $00'00+ _, \ 8URXEIE=0 4URXWIE=0
+  U1TCTL $20'00+ _, \ 30SSEL=SMCLK 8URXSE=0 ------------> try URXSE=1
+  U1BR1  $00'00+ _, \ 4194304/115200=36.4 (UG13.16)
+  U1BR0  $24'00+ _,
+  U1MCTL $54'00+ _,
+  ME2    $30'00+ _, \ 20UTXE1=ena 10URXE1=ena
+  U1CTL  $10'00+ _, \ PENA=0 PEV=0 SP=0 CHAR=1 Listen=0 SYNC=0 MM=0 SWRST=0
+  BCSCTL1 $87'00+ _, \ SMCLK=4MHz (1MHz:85.80)
+  DCOCTL $B0'00+ _,
+[THEN]
+  IE1    $00'00+ _, \ list-end marker.
+[BSL] [IF] ( DCO unmodified ) [ELSE] MOV -1 #, R4 @BEGIN DEC R4 Z? @UNTIL CALL `DCO4M #
+[THEN]
+
+[THEN] \ RAMBSL/ROMBSL -------------------------------
+
+A: `UMON  \ -- ; 68/ uses R4,R5,R6,R7
+  @BEGIN  BIT 1 #, FCTL3 &&  Z? @TILL \ 6/ wait until BUSY=0
+    MOV 'N' #, R4  CALL `UTX #  \ 8/ sync
+    CALL `URX2 #  MOV R4, R5  CALL `URX2 #  MOV R4, R6  RRC R6 \ 14/
+  Z? @IF  TST R5  NZ? @TILL  CALL R5  @AGAIN   \ 10/ count=0:exec, addr=0:nop
+  C? @IF \ 2/2 countOdd:send: R4=tmp R5=addr R6=wordCount
+    @BEGIN  MOV @R5+, R4  CALL `UTX2 #  DEC R6  Z? @UNTIL \ 10/
+  @AGAIN \ 2/2 countEven:recv: R4=tmp R5=addr R6=wordCount
+    @BEGIN  CALL `URX2 #  MOV R4, 0 (R5)  INCD R5  DEC R6  Z? @UNTIL \ 14/
+  @REPEAT \ 2/2
+A: `UEND
+_p@ org \ ready for adef.
+
+.all ."`BOOT=" `BOOT .w cr ;
+
+: SYNC`  0 TX2 0 TX2 ;  \ -- ; after 'N' synchro consumed
+
+: BLDUART \ -- ; setup UART for ramBootLoaDer communications
+[ BLDPORT BSLPORT- ] [IF]
+  ."BLDUART=" 0 uart! BLDPORT port!
+[BSL] [IF] 4800 bps evenParity [ELSE] 115200 bps noParity [THEN] \ rdy for sync
+  .bps` flushRX
+[THEN]
+;
+\ `BLDCOPY saves RAM-bootloader code, between BSLORG and `UEND, because it will
+\ be overwritten by application data initializations, which will be temporarily
+\ saved in `RAMSAVE while `BLDCOPY is restored for downloading by RRST`:
+_p@ BSLORG- equ `BLDSIZE
+create `BLDCOPY `BLDSIZE allot ;  BSLORG `@ `BLDCOPY `BLDSIZE cmove
+create `RAMSAVE `BLDSIZE allot ;
+
+create UTX `UTX , `URX ,  create UTX2 `UTX2 , `URX2 ,
+: ;;A` CALL` UTX2@ #` ;A` RX2 dup .w ."=" 16 << 16 >> .dec ;  \ display R4
+: loadrambld \ -- ; before erasing flashBootLoaDer
+  BSLORG `BLDSIZE _load  `BOOT 0 _load
+: rambld  `URX `UTX UTX 2! `URX2 `UTX2 UTX2 2!
+  $300 org`
+;
+
+[TRANSMISSION-LESS-TEST] [IF]  : RX ."<4E" $4E ;  [THEN]
+: RRST` \ -- ; BSLreset and download RAM bootloader
+  BLDUART  BRST`
+[1] [IF]
+  BSLORG `@ `RAMSAVE `BLDSIZE cmove \ save
+  `DCOCOPY BSLORG `@ `DCOSIZE cmove  BSLORG `DCOSIZE >BLK \ 1st overlay
+  `TUNEDCO >PC
+  `BLDCOPY BSLORG `@ `BLDSIZE cmove  BSLORG `BLDSIZE >BLK \ 2nd overlay
+  `RAMSAVE BSLORG `@ `BLDSIZE cmove \ restore
+  `BOOT >PC
+[ELSE]
+  BSLORG `@ `RAMSAVE `BLDSIZE cmove \ save
+  `BLDCOPY BSLORG `@ `BLDSIZE cmove
+  BSLORG `BLDSIZE \ -- @ # ; by 240-bytes packets
+  START 2dup 240 min tuck >BLK rot over+ -rot - ENTER 0= UNTIL 2drop
+  `RAMSAVE BSLORG `@ `BLDSIZE cmove \ restore
+  `BOOT >PC
+[THEN]
+  [RAMBSL] [IF] 115200 bpsx noParity SYNC` [ELSE] [BSL]` uart! [THEN]
+  BEGIN RX $4E- drop 0= UNTIL SYNC` \ flush RX upto sync, then resynch
+  rambld ."^J1:BitBanging@115200_RamMonitor_ready.^J"
+;
+
+: feraseall \ -- ; erase all main and info flash segments
+  $A506 SKIP \ MERAS=ERAS=1
+: ferasemain \ -- ; erase all main flash segments
+  $A504 THEN $FFF0 swap SKIP  \ MERAS=1
+: feraseg \ @ -- ; erase flash segment containing address @
+  $A502 THEN FCTL1 _!  fctl2 FCTL2 _!  $A500 FCTL3 _!   \ ERAS=1 Lock=0
+  dup _@ swap _! .all` \ (Warning: slas272f p39 note2: min 200ms)
+  SKIP
+: fwrite \ -- ; enable byte/word writes (UM5.10) before downloading in flash
+  $A540 FCTL1 _!  fctl2 FCTL2 _!  $A500 FCTL3 _!  .all` \ WRT=1 Lock=0
+  THEN   \ -- ; lock flash after erase or write
+  $A500 FCTL1 _!  fctl2 FCTL2 _!  $A510 FCTL3 _!  .all` \ WRT=0 Lock=1
+;
+
+: ;RDUMP`  \ @ -- ; dump word memories and peripherals
+  ;` BEGIN 16 2dup 1| _load 2dup bounds 2wdump + stopdump? UNTIL drop
+;
+: BDUMP  \ @ # -- ; dump byte peripherals
+  swap under  MOV` #,` R5`  MOV` #,` R6`
+  @BEGIN`  MOV.B` @R5+,` R4`  CALL` UTX@ #`  DEC` R6`  Z?` @UNTIL` ;A`
+  TIMES RX space .b REPEAT cr ;
+: .SFR`  \ -- ; display SFRs
+  ."IE1.2_IFG1.2_ME1.2_" \ IE1 6 BDUMP \ gives different result than:
+  6 TIMES  MOV.B` r ~ 6+ &,` R4`  CALL` UTX@ #`  REPEAT ;A`
+  6 TIMES RX space .b REPEAT cr
+;
+: .P1` ."P1_IN_OutDirIfgIesIE_Sel^J__" P1IN 7 BDUMP ;
+: .P2` ."P2_IN_OutDirIfgIesIE_Sel^J__" P2IN 7 BDUMP ;
+: .P3` ."P3_IN_OutDirSel^J__" P3IN 4 BDUMP ;
+: .P4` ."P4_IN_OutDirSel^J__" P4IN 4 BDUMP ;
+: .P5` ."P5_IN_OutDirSel^J__" P5IN 4 BDUMP ;
+: .P6` ."P6_IN_OutDirSel^J__" P6IN 4 BDUMP ;
+: .PORTS` .P1` .P2` .P3` .P4` .P5` .P6` ;
+: .DCO`  \ -- ; display system clock generator control
+  ."DCOCTL_BCSCTL1/2_" DCOCTL 3 BDUMP ;
+: .CMPA`  \ -- ; display Comparator_A
+  ."CACTL1/2_CAPD_" CACTL1 6 BDUMP ;
+: .UART`  \ -- ; display USART0 and USART1
+  ."CTL_TC_RC_MC_0UBR1_RX_TX^J" U0CTL 8 BDUMP  U1CTL 8 BDUMP ;
+
+: WDUMP 2dup 1| _load wdump ;
+: .WDT`  \ -- ; display WatchDogTimer control
+  ."WDTCTL_" WDTCTL 2 WDUMP ;
+: .FCTL`  \ -- ; display flash control (UM5.17)
+  ."FCTL__" FCTL1 6 WDUMP ;
+: .TA`  \ -- ; display Timer_A
+  ."TACTL_" TACTL 8 WDUMP  ."TAR___" TAR 8 WDUMP ;
+: .TB`  \ -- ; display Timer_B
+  ."TBCTL_" TBCTL 16 WDUMP ."TBR___" TBR 16 WDUMP ;
+: .ADC`  \ -- ; display ADC12
+  ."ADC12_CTL0_CTL1_IFG__IE____IV^J" ADC12CTL0 10 WDUMP
+  ."ADC12_MCTL0..15^J" ADC12MCTL0 16 BDUMP
+  ."ADC12_MEM0..15^J"  ADC12MEM0  32 WDUMP ;
+
+[THEN]
+
+\ ---------------------------------------------------------------------
+[1] [IF] ."+_FLD43_-_MSP430_FLASH_Boot-LoaDer^J" \ [0] when testing BSL
+
+\ FLD43 testing steps: (after the BLD43 testing steps above)
+\ - select([1]) hereunder "Erase flash and program Boot-LoaDer:"
+\   this erases the flash, loads the ram-monitor, and programs the flash
+\ - select([0]) hereunder "Boot-LoaDer already programmed:"
+\   and use RST to reset the MSP (see MSPRST) and boot on flash-monitor.
+\ That's all folks!!
+
+[~] MSPTYPE [IF] $F147 equ MSPTYPE [THEN] \ default: MSP430F147
+[ MSPTYPE $F147 = 2drop BOOL ] [IF] $500 _d! $600 equ RAMEND [THEN] \ F147:ram[200-600]
+[ MSPTYPE $F135 = 2drop BOOL ] [IF] $300 _d! $400 equ RAMEND [THEN] \ F135:ram[200-400]
+
+[~] FLDUART [IF] -1 equ FLDUART [THEN] \ default: use BTX/BRX software UART
+
+$FC00 equ BLDORG \ $FC00+$200=FLD43sector, $FE00+$200=IntVectSector
+BLDORG 8+ org \ space for RX/TX vectors
+
+[ FLDUART -1 = 2drop BOOL ] [IF] \ use BTX/BRX software UART ----------
+A: DCO4M  MOV 872 #, R4  \ SMCLK=3'571'712Hz(= 872 * 32768/8 = 31*115216)
+  BIS.B 7 #, BCSCTL1 &&  \ BCSCTL1=$87 DCOCTL=$8B approx for desired SMCLK
+[ELSE] \ use hardware UART0 or UART1 with SMCLK=4MHz ----------
+A: DCO4M  MOV 1024 #, R4 \ SMCLK=4'194'304Hz(= 1024 * 327678/8)
+  BIS.B 7 #, BCSCTL1 &&  \ BCSCTL1=$87 DCOCTL=$BC approx for 4MHz
+[THEN]
+A: TUNEDCO \ R4=SMCLK/(ACLK/8) -- ; 136/ uses R5 (see slaa336 code example)
+  PUSH TACTL &&  PUSH TACCTL2 &&  PUSH.B BCSCTL1 && \ save modified IOregs
+  BIS.B $B0 #, BCSCTL1 && \ 80XT2OFF=off 40XTS=slow 30DIVA=ACLK/8 7RSEL=same
+  MOV $5100 #, TACCTL2 && \ C000CM=4000_- 3000CCIS=1000ACLK 100CAP=100capture
+  MOV $0224 #, TACTL &&   \ 300TASSEL=200SMCLK 30MC=20cont 4TACLR=4clear
+  @BEGIN  BIT 1 #, TACCTL2 &&  NZ? @UNTIL \ wait 1st edge
+  @BEGIN  MOV TACCR2 &, R5 \ R5=TACCR2 when last ACLK rising edge
+    BIC 1 #, TACCTL2 &&  @BEGIN  BIT 1 #, TACCTL2 &&  NZ? @UNTIL \ 1CCIFG
+    SUB TACCR2 &, R5  ADD R4, R5 \ R5=R4-deltaTACCR2
+  GE? @IF  RRA R5  NZ? @WHILE \ DCO can be off by 1 for a tolerance
+    INC.B DCOCTL &&  C? @TILL \ DCO.MOD carry out to RSEL
+    CMP.B $B7 #, BCSCTL1 &&  NZ? @IF  INC.B BCSCTL1 &&  @AGAIN
+    DEC.B DCOCTL && \ fastest
+  @BREAK
+    DEC.B DCOCTL &&  NC? @TILL \ DCO.MOD borrow out to RSEL
+    CMP.B $B0 #, BCSCTL1 &&  NZ? @IF  DEC.B BCSCTL1 &&  @AGAIN
+    INC.B DCOCTL && \ slowest
+  @END
+  POP R5  AND $F8 #, R5 \ R5=savedBCSCTL1 with RSEL=0
+  BIC.B $F8 #, BCSCTL1 &&  BIS.B R5, BCSCTL1 && \ restore non-RSEL bits
+  POP TACCTL2 &&  POP TACTL && \ restore TACCTL2 and TACTL
+RET
+
+\ The flash monitor uses the UART in active polling mode, interrupts disabled,
+\ to be able to erase and reprogram the interrupt vectors.
+
+[ FLDUART -1 = 2drop BOOL ] [IF] \ use BTX/BRX software UART ------------------
+\ This is usable for any MSPTYPE.
+\ Note: same code as for [RAMBSL] but in flash.
+A: `URX \ -- R4=c ; 0.32/278 (margin=310-278=32)
+  @BEGIN  BIT BSLRX  C? @UNTIL \ 6/6* wait line idle--
+  @BEGIN  BIT BSLRX  Z? @UNTIL \ 6/6* wait start bit-_
+  MOV $F0FF #, R4 \ 4/2
+  @BEGIN  ADD $3000 #, R4  C? @TILL \ 6/4* R4=$20FF
+  \ first iteration: 6+2+4+3=15 wait half bit
+  \ next iterations: 4+4*6+3=31 wait full bit
+  BIT BSLRX  RRC.B R4  NC? @UNTIL \ 8/3+4 sample bit, 1st=start=0
+  \ stopBit detection commented out to save 28 cycles:
+  \ @BEGIN  ADD $3000 #, R4  C? @UNTIL \ 6/4*6=24 wait full bit
+  \ BIT BSLRX \ 4/4 C/NZ=goodStopBit Z/NC=badStopBit
+  RET
+A: `URX2  \ -- R4=w R7 ; 1.16/620+ receive word, LSByte1st
+  CALL `URX #  MOV R4, R7  CALL `URX #  SWPB R4  ADD R7, R4  RET
+A: `UTX2 \ R4=w -- R7=0 ; 1.4/639 send word, LSByte1st
+  CALL _p@ 2+ # \ fall thru:
+A: `UTX \ R4=c -- R7=0 ; 0.38/317
+  MOV.B R4, R7  SWPB R4  BIS $300 #, R7  CLRC \ 10/5 insert stop and start bits
+  @BEGIN  C? @IF \ 2/2 iteration1:C=0(startBit), iteration10:C=1(stopBit)
+    BIS BSLTX  @ELSE  BIC BSLTX  @ELSE \ 12/6 same timing for both branches
+  @THEN  @BEGIN  NOP  ADD $4000 #, R7  C? @UNTIL \ 8/5*4
+  RRA R7  Z? @UNTIL \ 4/3 shift out LSBit1st, stop bit last, iteration10:Z=1
+  RET
+[THEN] \ BTX/BRX software UART ------------------
+
+[ FLDUART 0 = 2drop BOOL ] [IF] \ use hardware UART0 ------------------
+\ should insert here check for MSPTYPE  FIXME!!!
+A: `URX \ -- R4=c ; 14/ waits until UART receiver ready, then returns c
+  @BEGIN  BIT URXIFG0  NZ? @UNTIL  MOV.B U0RXBUF &, R4  RET
+A: `URX2  \ -- R4=w ; 16/ receive word, LSByte1st
+  CALL `URX #  PUSH R4  CALL `URX #  SWPB R4  ADD @SP+, R4  RET
+A: `UTX2 \ R4=w -- ; 4/ send word, LSByte1st
+  CALL _p@ 2+ # \ fall thru:
+A: `UTX \ R4=c -- ; 16/ waits until UART transmitter ready, then sends c
+  @BEGIN  BIT UTXIFG0  NZ? @UNTIL  MOV.B R4, U0TXBUF &&  SWPB R4  RET
+[THEN] \ UART0 ------------------
+
+[ FLDUART 1 = 2drop BOOL ] [IF] \ use hardware UART1 ------------------
+MSPTYPE $F140 u< 2drop IF ."MSPTYPE=" MSPTYPE .w !"UART1_not_available" THEN ;
+A: `URX \ -- R4=c ; 14/ waits until UART receiver ready, then returns c
+  @BEGIN  BIT URXIFG1  NZ? @UNTIL  MOV.B U1RXBUF &, R4  RET
+A: `URX2  \ -- R4=w ; 16/ receive word, LSByte1st
+  CALL `URX #  PUSH R4  CALL `URX #  SWPB R4  ADD @SP+, R4  RET
+A: `UTX2 \ R4=w -- ; 4/ send word, LSByte1st
+  CALL _p@ 2+ # \ fall thru:
+A: `UTX \ R4=c -- ; 14/ waits until UART transmitter ready, then sends c
+  @BEGIN  BIT UTXIFG1  NZ? @UNTIL  MOV.B R4, U1TXBUF &&  SWPB R4  RET
+[THEN] \ UART1 ------------------
+
+A: INIBIO  \ @SP=@ -- ; 14/ CALL INIBIO #  {addr,value,}* IE1,ie1
+  POP R4  @BEGIN  MOV.B @R4+, R5  MOV.B @R4+, 0 (R5)  CMP IE1 #, R5  Z? @UNTIL
+  BR R4  \ proceed after {IE1,ie1} list-end marker
+
+A: BOOT  BOOT $FFFC _!  BOOT $FFFE _! ; \ -- ; NMI and RESET
+  DINT  MOV $5A80 #, WDTCTL && \ 80WDTHOLD=stop
+  MOV RAMEND #, SP
+
+[ FLDUART -1 = 2drop BOOL ] [IF]  \ use BTX/BRX software UART at 115200bps ---
+  CALL INIBIO #      \ 7      6      5      4      3      2      1      0
+  P1OUT   $02'00+ _, \                                           1
+  P1DIR   $02'00+ _, \                                           BTX
+\ P2DIR   $00'00+ _, \                                    BRX
+  P2SEL   $20'00+ _, \               Rosc
+\ P5SEL   $20'00+ _, \        ACLK   SMCLK  MCLK
+  BCSCTL1 $87'00+ _, \ SMCLK=~3.6MHz (1MHz:85.80)
+  DCOCTL  $8B'00+ _, \ 87.8B=~3.6MHz
+  IE1     $00'00+ _, \ UTXIE0 URXIE0
+  \ IE1 list-end marker.
+  CALL DCO4M #
+  $FFDE equ APPBOOTADDR \ $FFE0+$20=IntVect
+  MOV $55 #, R4  CALL `UTX #  CLR R4 \ wait echo:
+  @BEGIN  DEC R4  Z? @IF \ echo timeout(64K*10/4M=156ms): start application
+    CMP -1 #, APPBOOTADDR &&  NE? @WHILE  BR APPBOOTADDR &&
+  @THEN  BIT BSLRX  Z? @UNTIL \ echoStartBit: start UMON
+  \ Note: 
+[THEN] \ BTX/BRX software UART -----------------
+
+[ FLDUART 0 = 2drop BOOL ] [IF]  \ use hardware UART0 at 115200bps -----------
+  CALL INIBIO # -opt \ 7      6      5      4      3      2      1      0
+  P2SEL   $20'00+ _, \               Rosc
+  P3SEL   $30'00+ _, \ URXD1  UTXD1  URXD0  UTXD0
+\ P5SEL   $10'00+ _, \        ACLK   SMCLK  MCLK
+  \ U0: UART configuration: 115200bps SMCLK=4'194'304Hz
+  U0CTL   $11'00+ _, \ PENA   PEV    SP     CHAR   Listen SYNC   MM     SWRST
+  U0RCTL  $00'00+ _, \ FE            OE
+  U0TCTL  $20'00+ _, \ 30SSEL=SMCLK 8URXSE=0
+  U0BR1   $00'00+ _, \ 4194304/115200=36.4
+  U0BR0   $24'00+ _,
+  U0MCTL  $54'00+ _,
+  ME1     $C0'00+ _, \ UTXE0  URXE0=USPIE0
+  U0CTL   $10'00+ _, \ PENA   PEV    SP     CHAR   Listen SYNC   MM     SWRST
+  BCSCTL1 $87'00+ _, \ SMCLK=~4MHz (1MHz:85.80)
+  DCOCTL  $B0'00+ _, \ 87.B0=~4MHz=4'194'304Hz
+  IE1     $00'00+ _, \ UTXIE0 URXIE0
+  \ IE1 list-end marker.
+  CALL DCO4M #
+  $FFDE equ APPBOOTADDR \ $FFE0+$20=IntVect
+  MOV.B $55 #, U0TXBUF &&  CLR R4 \ wait echo:
+  @BEGIN  DEC R4  Z? @IF \ echo timeout(64K*10/4M=156ms): start application
+    CMP -1 #, APPBOOTADDR &&  NE? @WHILE  BR APPBOOTADDR &&
+  @THEN  BIT URXIFG0  NZ? @UNTIL  MOV.B U0RXBUF &, R4 \ echo: start UMON
+[THEN] \ UART0 -----------------
+
+[ FLDUART 1 = 2drop BOOL ] [IF] \ use hardware UART1 at 115200bps ------------
+  CALL INIBIO #      \ 7      6      5      4      3      2      1      0
+  P2SEL   $20'00+ _, \               Rosc
+  P3SEL   $C0'00+ _, \ .7=URXD1 .6=UTXD1
+  U1CTL   $11'00+ _, \ PENA   PEV    SP     CHAR   Listen SYNC   MM     SWRST
+  U1RCTL  $00'00+ _, \                             URXEIE URXWIE
+  U1TCTL  $20'00+ _, \               SSEL=SMCLK    URXSE
+  U1BR1   $00'00+ _, \ 4194304/115200=36.4
+  U1BR0   $24'00+ _,
+  U1MCTL  $54'00+ _,
+  ME2     $30'00+ _, \               UTXE1  URXE1
+  U1CTL   $10'00+ _, \ PENA   PEV    SP     CHAR   Listen SYNC   MM     SWRST
+  BCSCTL1 $87'00+ _, \ SMCLK=~4MHz (1MHz:85.80)
+  DCOCTL  $B0'00+ _,
+  IE2     $00'00+ _, \               UTXIE1 URXIE1
+  IE1     $00'00+ _, \ IE1 list-end marker.
+  CALL DCO4M #
+  $FFDE equ APPBOOTADDR \ $FFE0+$20=IntVect
+  MOV.B $55 #, U1TXBUF &&  CLR R4 \ wait echo:
+  @BEGIN  DEC R4  Z? @IF \ echo timeout(64K*10/4M=156ms): start application
+    CMP -1 #, APPBOOTADDR &&  NE? @WHILE  BR APPBOOTADDR &&
+  @THEN  BIT URXIFG1  NZ? @UNTIL  MOV.B U1RXBUF &, R4 \ echo: start UMON
+[THEN] \ UART1 -----------------
+
+A: UMON  \ -- ; 72/ uses R4,R5,R6
+  @BEGIN  MOV 'N' #, R4  CALL `UTX # \ 8/ sync
+    CALL `URX2 #  MOV R4, R5  CALL `URX2 #  MOV R4, R6  RRC R6 \ 14/
+  Z? @IF  TST R5  NZ? @TILL  CALL R5  @AGAIN \ 10/ count=0:exec, addr=0:nop
+  C? @IF \ 2/ countOdd:send: R4=tmp R5=addr R6=wordCount
+    @BEGIN  MOV @R5+, R4  CALL `UTX2 #  DEC R6  Z? @UNTIL \ 10/
+  @AGAIN \ 2/ countEven:recv: R4=tmp R5=addr R6=wordCount
+    @BEGIN  CALL `URX2 #  PUSH SR  DINT  MOV R4, 0 (R5)  POP SR
+      INCD R5  DEC R6  Z? @UNTIL \ 20/  DINT in case write in flash
+  @REPEAT \ 2/
+A: BLDEND
+BLDORG org  `URX _, `UTX _, `URX2 _, `UTX2 _, \ patch vectors
+$0200 org \ ready for adef
+
+\ =============================================
+[~] INIFLASH [IF] \ Boot-LoaDer already programmed:
+  .all ."BOOT=" BOOT .w cr  `UTX UTX! `UTX2 UTX2!  BLDUART ;
+  \ Note: ;A` calls _execute^_serExec which does: _load ' .changed !^
+[ELSE] \ Erase flash and program Boot-LoaDer:
+  ."BOOT=" BOOT .w cr  utrace on
+  _load ' .changed !^  MERPASS ^^ RRST` fwrite ;
+[THEN]
+\ =============================================
+: FRST` \ -- ; reset and start flash monitor (preventing APPBOOT)
+  ;` MSPRST \ fall thru
+: FBOOT
+  \ If FLDUART=-1(BSLTX/BSLRX) use uart1/BSLPORT otherwise use uart0/BLDPORT:
+  [ FLDUART -1 = 2drop BOOL ] [IF] 1 [ELSE] 0 [THEN] uart!
+  115200 bpsx noParity
+  utrace@ utrace on
+  BEGIN RX $55- drop 0= UNTIL $55 TX \ wait sync, then no APPBOOT
+  BLDORG dup 9 _load  dup _@ over 2+ _@ UTX 2! 4+ dup _@ swap 2+ _@ UTX2 2!
+  utrace!  $200 org`  ."^J0:BitBanging@115200_FlashMonitor_ready.^J"
+;
+
+: writeflash \ @ # -- ; from @ for # bytes erase sectors then reprogram flash
+  2dup bounds  over BLDORG- over BLDORG- $200- ^ drop 0< \ -- @ # @+# @ ; FLD?
+  IF 2drop swap .w ."+" .w !"writeflash:_bootloader_protected" ;THEN
+  BEGIN dup feraseg $FE00& $200+ u<= UNTIL 2drop \ -- @ #
+  \ Note: $FE00& not on 1st address to access sectors at $1000 $1080 $1100
+  2/ swap 1+ 2/ mem+ $10000+ swap $FF fill fwrite
+;
+
+\ IAR interface ----------------------------------------------------------
+\ This allows mixing of /* FreeForth source */ and IAR source /*** etc:
+: */` BEGIN '/' parse 2drop wsparse swap c@ '*'- 2drop 0= UNTIL \ fallthru
+: /*` ; \ ignore first one, next ones may have several '*'
+
+\ IAR code output in TXT format: {@xxxx{ xx xx}*}*q
+: `@xxxx \ @ -- word @+5 ; parses hex-word
+  dupc@ >r '$' overc! dup 5 number 0- drop \ -- @ a ; nz:failed
+  swap r> overc! \ -- a @ ; restore char overwritten by '$'
+  IF 5 type !"hexadecimal_address_expected" ;THEN  5+ \ -- a @+5
+;
+: `_xx \ @ -- byte @+3 ; parses hex-byte
+  dupc@ >r '$' overc! dup 3 number 0- drop \ -- @ c ; nz:failed
+  swap r> overc! \ -- c @ ; restore char overwritten by '$'
+  IF 1+ 2 type !"hexadecimal_byte_expected" ;THEN  3+ \ -- c @+3
+;
+: @TXT \ @ # -- ; "OUTPUT.TXT" link ;
+  openr ?ior  tp@ dup eob over- ior@ read bounds  ior@ close drop \ -- @end @
+  dupc@ '@'- drop IF !"initial_@_not_found" ;THEN
+  BEGIN u> dupc@ WHILE 'q' <> drop WHILE \ -- @end @ c ; ignore all after 'q'
+    '@' CASE `@xxxx swap `p! AGAIN \ parse address into `p (discompiler ptr)
+    32- drop 0<= IF 1+ AGAIN \ skip spaces/cr/lf
+    1- `_xx `_xx -rot $100* + `p@ _! 2 `p +! \ parse/append word (LSByte1st)
+  REPEAT drop 2drop
+;
+: `txt \ @ # -- ; generate section in IAR TXT format
+  ."@" over .w ."^M^J"  bounds \ -- @end @ ; DOS:CR+LF
+  BEGIN u> WHILE 2dup 16+ min swap \ -- @end @+16 @
+    BEGIN dup _@ dup .b space 8 >> .b 2+ u> WHILE space REPEAT
+    drop ."^M^J" \ -- @end @+16
+  REPEAT 2drop
+;
+: .TXT \ -- ; generate all changes in IAR TXT format
+  .changed @^  `txt ' .changed !^  .all`  .changed !^  ."q^M^J"
+;
+
+\ INTEL HEX32 interface ----------------------------------------------------
+\ http://en.wikipedia.org/wiki/Intel_HEX
+\ ":ssaaaatt..cc" ss=size aaaa=address tt=type ..=data[size] cc=-sum(ssaaaatt..)
+\ tt=00(":ssaaaa00..cc"): address[15:0](bigEndian):bytedata[size]
+\ tt=01(":00000001FF"): endRecord(EndOfFile)
+\ tt=04(":02000004hhhhcc"): hhhh=address(bigEndian)[31:16]
+\ tt=05(":04000005hhhhllllcc"): startAddress(bigEndian)[31:0]
+: `.line# ."@HEX:line" ior@ .dec ;
+: `xx \ @ -- byte @+2 ; parses hex-byte
+  1- dupc@ >r '$' overc! dup 3 number 0- drop \ -- @-1 c ; nz:failed
+  swap r> overc! \ -- c @-1 ; restore char overwritten by '$'
+  IF `.line# 1+ 2 type !"hexadecimal_byte_expected" ;THEN
+  over `i +!  3+ \ -- c @+2 ; accumulate checksum into `i
+;
+: `@line \ @ -- @+13+2*size type ; parses line ":ssaaaatt..cc^M^J"
+  1 ior +! \ line#
+  c@+ ':'- drop IF `.line# !"missing_colon" ;THEN \ -- @+1
+  0 `i!  `xx \ -- size @+3 ; init checksum, parse size, then address MSByte1st:
+  1- dupc@ >r '$' overc! dup 5 number 0- drop \ -- size @+2 a ; nz:failed
+  swap r> overc! \ -- size a @+2 ; restore char overwritten by '$'
+  IF `.line# 1+ 4 type !"hexadecimal_address_expected" ;THEN
+  swap dup 8 >> over+ `i +!  `p!  5+ \ -- size @+7 ; accumulate checksum
+  `xx -rot >r 2/ \ -- @+9 size/2 | -- type ; parse recordType, then size bytes:
+  TIMES `xx `xx -rot $100* + `p@ _! 2 `p +! REPEAT \ -- @+9+2*size ; LSByte1st
+  `xx nip `i@ $FF& drop IF `.line# 2- 2 type !"bad_checksum" ;THEN \ -- @+11+2*size
+  w@+ $0A0D- drop IF `.line# !"CR+LF_expected" ;THEN  r> \ -- @+13+2*size type
+;
+: @HEX \ @ # -- ; "OUTPUT.HEX" @HEX ;
+  openr ?ior  tp@ dup eob over- ior@ read bounds  ior@ close drop \ -- @end @
+  0 ior! \ line#
+  BEGIN u> WHILE `@line 0- drop UNTIL 2drop \ parse lines until endRecord
+;
+: `.line \ @end @ -- @end @+16
+  2dup 16+ min swap \ -- @end @+16 @
+  .":" over over- dup .b \ -- @end @+16 @ size
+  over 8 >> dup .b +     \ -- @end @+16 @ size+@H
+  over dup .b + >r ."00" \ -- @end @+16 @ | -- size+@H+@L ; "00"type
+  BEGIN dup _@ dup 8 >> swap \ -- @end @+16 @ MSByte LSByte | -- accu
+    2dup+ r> + >r  .b .b  2+ \ -- @end @+16 @+2 | -- accu+lo+hi ; LSByte1st
+  u<= UNTIL drop  r> negate .b ."^M^J" \ -- @end @+16 ; checksum
+;
+: `hex \ @ # -- ; generate section in INTEL HEX format
+  bounds BEGIN u> WHILE `.line REPEAT 2drop
+;
+: .HEX \ -- ; generate all changes in INTEL HEX format
+  .changed @^  `hex ' .changed !^  .all`  .changed !^
+  .":00000001FF^M^J" \ endRecord
+;
+
+[THEN]

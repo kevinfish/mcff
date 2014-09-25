@@ -1,0 +1,2123 @@
+\ ff.help
+\ $Id: ff.help,v 1.21 2010-01-04 16:23:06 lavarec Exp $
+\ This help file begins with the help source code, followed by the help
+\ contents, composed of help records, each starting with a line beginning
+\ with a keyword (help entry), and ending with an empty line, with maybe
+\ other lines in between, each beginning with at least one space.
+
+\ -- @ # ; we're called from help` (defined in ff.ff)
+  H@ @ execute \ forget marker defined by needed called by help`
+  swap dup>r swap dup>r  BEGIN 2drop lnparse \ -- a n | == @ # ; n=0:EOF
+    0= IF dropr> swap dropr> swap ;THEN \ -- @ # ; not found
+  over 2r $- 0= drop TILL over r + c@ $BF& $20- 0= drop UNTIL 2rdrop
+  \ keyword+space or keyword+backquote match at beginning of line:
+  \ display upto empty line (Linux:LF Windows:CR,LF):
+  START lnparse ENTER 2dup type cr + >in@ over- 2* + 1- c@ 10- 0= drop UNTIL
+  0 EOF` \ -- 0 ; found, skip to end of file
+;
+
+help` ( <name> -- ) displays name's related help (try: help bye)
+  Items with no stack diagram are concepts, or hidden non-compilable words.
+  Beginner: start with "help DATAstack" to understand "stack diagrams".
+  Forth geek: look at "conditionals" and "flow-control" which are unusual,
+    and at "anonymous" and "backquote" which are specific to FreeForth.
+  Curious: start with the comments at beginning of file "ff.asm".
+  see also: man win32.hlp bye ff.help  ff.ff
+
+  ------------------
+  DISTRIBUTION FILES
+
+hanoi is an example source file animating the Hanoi Tours problem/game
+hello is an example auto-executable source file explaining how to make
+  auto-executable "FreeForth-script" files for Linux, such as hanoi and bed
+bed.ff is the auto-executable source code of a minimalist Blocks-EDitor
+  inspired from RetroForth
+  see also: ff.asm ff.boot ff.ff ff.help hello hanoi
+
+ff.help is the FreeForth help file, expected by "help`" (defined in ff.ff)
+  to be found in FreeForth root directory (where ff.ff is found at boot time).
+  Users may create their own help files following the same simple text format,
+  and add them into "help`" definition, as explained in commented sample line.
+  see also: ff.asm ff.boot ff.ff bed.ff hello
+
+ff.asm is the assembler source file defining FreeForth kernel;
+  read its contents for implementation and compilation notes.
+  see also: fflin.asm ffwin.asm
+ff.boot is the FreeForth kernel extensions inlined source file
+  assembled by fasm in the ff executable and compiled at boot time.
+  see also: fflin.boot ffwin.boot
+ff.ff is the FreeForth kernel extensions separate source file
+  automatically compiled at boot time after ff.boot if it is found:
+  Lin(fflin.boot): either in "$HOME/ff/" (maybe a symbolic link) or in "./"
+  Win(ffwin.boot): either in "$FFROOT$" or in "C:\ff\" or in ".\" 
+  Edit ff.ff to enable([1]) or disable([0]) its optinal sections,
+  or to add your own startup code, such as:  needs mystartup.ff
+  see also: ff.asm ff.boot ff.help boot bed.ff hello open'
+
+fflin.asm is the Linux-port main assembler source file
+fflinio.asm is the assembler source file for Linux-specific I/O
+fflin.boot is the FreeForth source file for Linux-specific boot
+  see also: fflin.asm fflinio.asm boot  ffwin.asm
+
+ffwin.asm is the Windows-port main assembler source file
+ffwinio.asm is the assembler source file for Windows-specific I/O
+ffwin.boot is the FreeForth source file for Windows-specific boot
+  see also: ffwin.asm ffwinio.asm boot  fflin.asm
+
+fasm is the free-software assembler "Flat-Assembler" used by FreeForth to
+  generate both Linux and Windows executables, thanks Tomasz Grysztar!
+  see also: http://flatassembler.net
+
+  --------------------
+  DATA AND CALL STACKS
+
+DATAstack is a memory space analog to the CALLstack, but separate
+  (most other languages use a single stack to store "stack frames"
+  containing subroutine arguments, return address to caller, saved
+  processor registers, and local variables).
+  The DATAstack is a 32 bits wide Last-In-First-Out stack, where the "push"
+  operation pre-decrements by 4 the stack-pointer before writing to memory,
+  and the "pop" operation post-increments by 4 the stack-pointer after
+  reading from memory.
+  The DATAstack-pointer is stored in the i386 register "eax" or "esp",
+  depending on the state of the compiler CALLbit (SC bit0, see "SC").
+  Almost all Forth words (usually called "subroutines" in other languages)
+  pop their input argument(s) from the DATAstack, and push their result(s)
+  back onto it (and maybe do some other useful side effect).
+  This is documented for each word with a "stack diagram" composed of two
+  parts separated by "--": the left part shows, and names, the number of
+  DATAstack cells used as inputs, the right part the cells used for outputs;
+  in both parts, the rightmost item represents the DATAstack top cell.
+  Some conventions are often used to indicate DATAstack items types:
+  . c represents a byte value ( 8 bits stored in a 32 bits DATAstack cell)
+  . w represents a word value (16 bits stored in a 32 bits DATAstack cell)
+  . n represents a long value (32 bits stored in a 32 bits DATAstack cell)
+  . u represents an unsigned long value
+  . @ represents a memory address
+  . # represents a string size
+  . ? represents a boolean, FALSE if null, TRUE otherwise
+  see also: CALLstack TOS NOS SC
+
+TOS is an abbrev for Top Of Stack: it refers to the DATAstack top cell
+  In the DATAstack diagrams, this is always the rightmost cell
+  TOS is cached into a 386 register, either "ebx" or "edx" depending on
+  the state of the compiler SWAPbit (SC bit1, see "SC")
+NOS is an abbrev for Next Of Stack: it refers to the DATAstack 2nd cell,
+  just under TOS, also just left of TOS in the DATAstack diagrams
+  NOS is cached into a 386 register, either "edx" or "ebx" depending on
+  the state of the compiler SWAPbit (SC bit1, see "SC")
+  see also: TOS DATAstack SC
+
+CALLstack is a memory space allocated by the operating system mainly to save
+  return addresses from subroutine calls; it is also used to store loop
+  counters (see "for" and "next"), and may be used for temporary storage
+  (see the inter-stack transfer words ">r", "r>", etc.), in which case this
+  is documented for each such word by a second "stack diagram" (see DATAstack)
+  composed of two parts separated by "==" (instead of "--" for the DATAstack)
+  with the left part showing the number of CALLstack cells used as inputs,
+  and the right part the cells used for outputs; as for the DATAstack, in
+  both parts the rightmost item represents the CALLstack top cell.
+  The CALLstack-pointer is stored in the i386 register "esp" or "eax",
+  depending on the state of the compiler CALLbit (SC bit0, see "SC").
+  see also: DATAstack TOS NOS SC
+
+  ---------------------
+  CODE GENERATION BASIS
+
+rst ( -- ) tests and resets SC, restoring default registers allocation:
+  if SC.bit1(SWAPbit)=1: clear SWAPbit and generates "xchg ebx,edx" (87DA)
+  if SC.bit0(CALLbit)=1: clear CALLbit and generates "xchg eax,esp" (94)
+  typically, "rst" must be used before generating any "call" or "ret"
+>SC ( n -- ) sets SC as specified by n, maybe changing registers allocation:
+  if SC.bit1(SWAPbit) changes: generates "xchg ebx,edx" (87DA)
+  if SC.bit0(CALLbit) changes: generates "xchg eax,esp" (94)
+  typically, ">SC" is used before a control-thread join (such as "THEN")
+  to restore the state "SC" had before a control-thread split (such as "IF")
+SC ( -- @ ) compiler state variable: stores current register-allocations
+  bit1(SWAPbit):NOS,TOS   bit0(CALLbit):callSP,dataSP
+     0:      -- edx ebx      0:         esp    eax
+     1:      -- ebx edx      1:         eax    esp
+  see also: rst >SC >C0 >C1 >S0 >S1 swap  ff.asm
+
+>S1 ( -- ) tests and sets SC SWAPbit, such that NOS=ebx and TOS=edx
+  if the SWAPbit was reset, generates "xchg ebx,edx" (87DA)
+>S0 ( -- ) tests and resets SC SWAPbit, such that NOS=edx and TOS=ebx
+  if the SWAPbit was set, generates "xchg ebx,edx" (87DA)
+>C1 ( -- ) tests and sets SC CALLbit, such that callSP=eax and dataSP=esp
+  if the CALLbit was reset, generates "xchg eax,esp" (94)
+>C0 ( -- ) tests and resets SC CALLbit, such that callSP=esp and dataSP=eax
+  if the CALLbit was set, generates "xchg eax,esp" (94)
+  see also: >S1 >S0 >C1 >C0 SC >SC swap  ff.asm
+
+c04 ( -- ) exchanges i386 registers eax and esp in last compiled word:
+  increments by 2 the compilation pointer (ebp), and toggles bit2
+  of byte at [ebp-1] if the CALLbit is set
+s09 ( -- ) exchanges srce and dest regs ebx/edx in last compiled mod/rm byte:
+  increments by 2 the compilation pointer (ebp),
+  and toggles bit3 and bit0 at [ebp-1] if the SWAPbit was set
+s08 ( -- ) exchanges i386 srce regs ebx/edx in last compiled mod/rm byte:
+  increments by 2 the compilation pointer (ebp),
+  and toggles bit3 at [ebp-1] if the SWAPbit was set
+s01 ( -- ) same as s1 except increments by 2 the compilation pointer
+s1 ( -- ) exchanges i386 dest regs ebx/edx in last compiled mod/rm byte:
+  increments by 1 the compilation pointer (ebp),
+  and toggles bit0 at [ebp-1] if the SWAPbit was set
+  see also: c04 s01 s08 s09 SC  ff.asm
+
+,3` ( -- ) compiles code to increment by 3 the compilation pointer
+  : ,3` $036D8D, ,^M~m^C" ; \ lea ebp,[ebp+3]  ^M~=$8D m=$6D ^C=$03
+,4` ( -- ) compiles code to increment by 4 the compilation pointer
+  : ,4` $046D8D, ,3 ; \ lea ebp,[ebp+4]
+,2` ( -- ) compiles code to increment by 2 the compilation pointer
+  : ,2` $026D8D, ,3 ; \ lea ebp,[ebp+2]
+,1` ( -- ) compiles code to increment by 1 the compilation pointer
+  : ,1` $45, ,E" ; \ inc ebp  'E'=$45
+  Note: the i386 ebp register holds the compilation pointer
+  see also: ,3 ,4 ,2 ,1 here allot , c, w,  ff.boot
+
+here` ( -- @ ) pushes onto DATAstack the current compilation pointer
+  (kept in i386 register ebp); this is the address where the compiler
+  appends generated i386 native binary code
+  : here` over` $EB89, s01 ; \ mov ebx,ebp
+allot` ( n -- ) adds n to the compilation pointer (kept in i386 register ebp)
+  Typically, "allot" is used to allocate space for data after "create"
+  : allot` $DD01, s08 drop` ; \ add ebp,ebx
+  see also: here allot , c, w, ,1 ,2 ,4 ,3  ff.boot
+align` ( -- ) aligns the compilation pointer on an address multiple of 4
+  : align` $90909090, here negate 3& allot ; \ nop nop nop nop
+,` ( n -- ) appends one long (4 bytes) n to the code&data space
+  : ,` $FF005D89, s08 ,1 ,4` drop` ; \ mov[ebp],ebx  lea ebp,[ebp+4]
+w,` ( w -- ) appends one word (2 bytes) w to the code&data space
+  : w,` $005D8966, ,1 s08 ,1 ,2` drop` ; \ mov[ebp],bx  lea ebp,[ebp+2]
+c,` ( c -- ) appends one byte c to the code&data space (pronounce "c-comma")
+  : c,` $45005D88, s08 ,2 drop` ; \ mov[ebp],bl  inc ebp
+  see also: here allot align , c, w, ,1 ,2 ,4 ,3  ff.boot
+
+  ---------------
+  STACKS HANDLING
+
+swap` ( x y -- y x ) exchanges the top two DATAstack cells TOS and NOS
+  "swap" may be used almost for free, because instead of generating code,
+  this macro only exchanges the names of the two i386 registers allocated
+  to cache the top two DATAstack cells (namely ebx and edx); sometimes,
+  such as before compiling a "call" or "ret" instruction, the compiler must
+  restore the default registers allocation, and generate an "xchg ebx,edx"
+  instruction (only if the registers names are not already the default).
+  : swap` [ $8035 w, SC , 2 c, ] ; \ xorb[SC],2
+  see also: >S1 dup rot  ff.asm
+
+2dup` ( x y -- x y x y ) double-duplicate DATAstack
+  : 2dup` over` over` ;
+dup` ( x -- x x ) duplicates TOS contents on top of DATAstack
+  : dup` under` nipdup` ;
+nipdup` ( x y -- y y ) overwrites NOS with TOS
+  : nipdup` $DA89, s09 ; \ mov edx,ebx
+tuck` ( x y -- y x y ) duplicates TOS contents under NOS
+  : tuck` swap` over` ;
+over` ( x y -- x y x ) duplicates NOS contents over TOS
+  : over` under` swap` ;
+under` ( x y -- x x y ) duplicates NOS contents under TOS
+  : under` >C1 $52, s1 ; \ push edx
+  see also: dup over tuck under  ff.asm ff.boot
+
+pick` ( xn..x0 n -- xn..x0 xn ) compiles inline code to replace TOS=n with
+  the n-th DATAstack item under TOS, where "0 pick" is equivalent to "dup"
+  Note: n is expected to be a (small) constant compiled just before "pick"
+  : pick` \ must be preceded by "52(push edx)6Axx(push byte)5A(pop edx)"
+    here 4- @ $FE00FFFE& $5A006A52- IF !"is_not_preceded_by_a_constant" ;THEN
+    drop -3 allot  here 1+ c@ 1- 0= IF drop ;THEN  \ "52(push edx)"=over` C=1
+    0< IF drop swap` nipdup` ;THEN  \ i.e. dup`
+    $5C8B, s08 10 << $24+ w, ;  \ 8B5C24xx(mov ebx,[esp+4n])
+  see also: dup over  ff.ff
+
+2drop` ( x y -- ) double-pop DATAstack
+  : 2drop` drop` drop` ;
+drop` ( n -- ) pops TOS from DATAstack; TOS previous contents is lost
+  : drop` swap` nip` ;
+nip` ( x y -- y ) pops NOS from DATAstack; NOS previous contents is lost
+  : nip` >C1 $5A, s1 ; \ pop edx
+  see also: nip drop 2drop  ff.asm ff.boot
+
+rot` ( x y z -- y z x ) rotates the top three DATAstack cells, 3rd to top
+  : rot` >rswapr>` swap` ;
+-rot` ( x y z -- z x y ) rotates the top three DATAstack cells, top to 3rd
+  : -rot` swap` >rswapr>` ;
+>rswapr>` ( x y z -- y x z ) exchanges the 2nd and 3rd DATAstack cells
+  : >rswapr>` $201487, s08 -1 allot c04 ; \ xchg edx,[eax/esp]
+  see also: rot -rot swap 2drop 2dup  ff.boot
+
+depth ( -- n ) returns the net number of cells pushed onto (positive)
+  or popped from (negative) the DATAstack since startup; ".s" displays it
+  see also: .s .h  ff.asm
+
+>r` ( x -- | == x ) pops x from DATAstack and pushes it onto CALLstack
+  : >r` dup>r` drop` ;
+2>r` ( x y -- | == x y ) double-pop DATAstack to double-push CALLstack
+  : 2>r` swap` dup>r` swap` dup>r` 2drop` ;
+dup>r` ( x -- x | == x ) pushes TOS contents onto CALLstack
+  : dup>r` >C0 $53, s1 ; \ push ebx
+r>` ( -- x | x == ) pops x from CALLstack and pushes it onto DATAstack
+  : r>` over` dropr>` ;
+2r>` ( -- x y | x y == ) double-pop CALLstack to double-push DATAstack
+  : 2r>` 2dup` dropr>` swap` dropr>` swap` ;
+dropr>` ( x -- y | y == ) pops y from CALLstack and overwrites TOS with it
+  : dropr>` >C0 $5B, s1 ; \ pop ebx
+  see also: >r 2>r dup>r r> 2r> dropr> r 2r rdrop 2rdrop  ff.boot
+
+r` ( -- x | x == x ) pushes the CALLstack top cell onto the DATAstack
+  : r` over` $188B, s08 ; \ mov ebx,[eax]
+2r` ( -- x y | x y == x y ) pushes the top two CALLstack cells onto DATAstack
+  Note: the order of x and y are the same on both stacks
+  : 2r` over` $04588B, s08 ,1 r` ; \ mov ebx,[eax+4]
+rdrop` ( -- | x == ) pops the CALLstack top cell, which is lost
+  : rdrop` $04C483, c04 ,1 ; \ add esp/eax,4
+2rdrop` ( -- | x y == ) pops the CALLstack top two cells, which are lost
+  : 2rdrop` $08C483, c04 ,1 ; \ add esp/eax,8
+  see also: r 2r rdrop 2rdrop >r 2>r dup>r r> 2>r dropr>  ff.boot
+
+rp@` ( -- @ ) push on DATAstack the current CALLstack pointer
+  : rp@` over` $C389, s01 ;  \ mov ebx,eax
+sp@` ( -- @ ) push on DATAstack the current DATAstack pointer
+  : sp@` over` $E389, s01 ;  \ mov ebx,esp
+  see also: rp@ pick  ff.ff
+
+  ------------------
+  INTEGER ARITHMETIC
+
+over&` ( x y -- x y&x) over-and       : over&` $D321, s09 ; \ and ebx,edx
+  (0&0=0 0&1=0 1&0=0 1&1=1, 0 is dominant, 1 recessive)
+over|` ( x y -- x y|x) inclusive-or   : over|` $D309, s09 ; \ or ebx,edx
+  (0|0=0 0|1=1 1|0=1 1|1=1, 1 is dominant, 0 recessive)
+over^` ( x y -- x y^x) exclusive-or   : over^` $D331, s09 ; \ xor ebx,edx
+  (0^0=0 0^1=1 1^0=1 1^1=0, 0 is neutral, 1 toggles)
+2dup+` ( x y -- x y x+y ) push-add    : 2dup+` over` over+` ; \ see also bounds
+over+` ( x y -- x y+x) over-add       : over+` $D301, s09 ; \ add ebx,edx
+over-` ( x y -- x y-x) over-subtract  : over-` $D329, s09 ; \ sub ebx,edx
+over*` ( x y -- x x*y) over-multiply  : over*` $DAAF0F, ,1 s09 ; \ imul ebx,edx
+  These are unusual but efficient basic building primitives
+  see also: over& over| over^ over+ over- over* ~ & | ^ + - * /  ff.boot
+
+&` ( x y -- x&y ) pops-and      : &` over&` nip` ;
+|` ( x y -- x|y ) pops-incl-or  : |` over|` nip` ;
+^` ( x y -- x^y ) pops-excl-or  : ^` over^` nip` ;
+  Note: | ^ & are bitwise operators; resp. usual Forth names: or xor and
++` ( x y -- x+y ) pops-add      : +` over+` nip` ;
+-` ( x y -- x-y ) pops-subtract : -` swap` over-` nip` ;
+*` ( x y -- x*y ) pops-multiply : *` over*` nip` ;
+/` ( x y -- x/y ) pops-divide   : /` /%` nip` ;
+%` ( x y -- x%y ) pops-modulo   : %` /%` drop` ;
+  Note: % sign = x sign (usual Forth name: mod)
+  Note: every literal or constant may be suffixed by | ^ & + - * / %
+  see also: & | ^ + - * / %  ~ negate /% /mod  literalcompiler  ff.boot
+
+~` ( u -- ~u ) complements TOS bitwise  : ~` $D3F7, s01 ; \ not ebx
+  Note: usual Forth name is "not", or "invert" in ANS-Forth
+  WARNING: this instruction doesn't change the i386 condition flags!!!
+negate` ( n -- -n ) negates TOS         : negate` $DBF7, s01 ; \ neg ebx
+bswap` ( n3210 -- n0123 ) byteswaps TOS : bswap` $CB0F, s01 ; \ bswap ebx
+  Note: use bswap to reverse TOS bytes order (i.e. reverse its "endianness")
+flip` ( n3210 -- n3201 ) flips TOS LSWord : flip` $FB86, s09 ; \ xchg bh,bl
+  Note: flip is a 16-bits version of bswap
+  see also: ~ negate bswap & | ^ + -  ff.boot
+
+invert see ~
+not see ~
+and see &
+or  see |
+xor see ^
+mod see %
+  These usual Forth names are renamed in FreeForth with their single-character
+  C aliases; if you aren't happy with these, simply create aliases, such as:
+  &` ' alias and`   |` ' alias or`   ^` alias xor`   %` ' alias mod`
+  see also: invert ~ & | ^ % alias
+
+1-` ( n -- n-1 )    : 1-` $4B, s1 ; \ dec ebx
+1+` ( n -- n+1 )    : 1+` $43, s1 ; \ inc ebx
+2+` ( n -- n+2 )    : 2+` 1+` 1+` ;
+4+` ( n -- n+4 )    : 4+` $04C383, s01 ,1 ; \ add ebx,4
+2*` ( n -- n*2 )    : 2*` $E3D1, s01 ; \ shl ebx,1
+2/` ( n -- n/2 )    : 2/` $FBD1, s01 ; \ sar ebx,1
+4*` ( n -- n*4 )    : 4*` $02E3C1, s01 ,1 ; \ shl ebx,2
+4/` ( n -- n/4 )    : 4/` $02FBC1, s01 ,1 ; \ sar ebx,2
+8*` ( n -- n*8 )    : 8*` $03E3C1, s01 ,1 ; \ shl ebx,3
+8/` ( n -- n/8 )    : 8/` $03FBC1, s01 ,1 ; \ sar ebx,3
+<<` ( n u -- n<<u ) : <<` $E2D3D989, s08 s01 drop` ; \ mov ecx,ebx  shl edx,cl
+>>` ( U u -- U>>u ) : >>` $EAD3D989, s08 s01 drop` ; \ mov ecx,ebx  shr edx,cl
+  Warning: left shifts (2* 4* 8* <<) don't change the i386 flags, except carry.
+  Warning: arithmetic right shifts (2/ 4/ 8/) truncate fractional bits, i.e.
+  round towards -infinity, whereas division by powers of 2 round towards zero:
+  the results are identical for n>=0, but differ for n<0! To divide negative
+  numbers by 2 4 8 with rounding towards zero, use 2 / or 4 / or 8 / (or better
+  02/ or 04/ or 08/ that literalcompiler generates in 10 bytes instead of 16).
+  Note: >> is unsigned (the MSBit is not propagated to the right)
+  see also: 1- 1+ 2+ 4+ 2* 2/ 4* 4/ 8* 8/ << >>  + - * / % m/mod  ff.boot
+
+m/mod` ( xl xh y -- x%y x/y) divides the signed 64 bits dividend (xh<<32)+xl
+  by signed divisor in TOS, TOS gets signed quotient, and NOS signed remainder
+  with same sign as dividend (i.e. integer division rounding towards zero)
+  \ 870424(xchg eax,[esp])F7FB(idiv ebx)89C3(mov ebx,eax)58(pop eax)
+  : m/mod >S0 >C1 $F7240487, ,4 $58C389FB, ,4 ;
+/%` ( x y -- x%y x/y ) divides signed dividend in NOS by signed divisor in TOS,
+  TOS gets signed quotient, and NOS signed remainder with same sign as dividend
+  (Note: usual Forth name: /mod)
+  \ 50(push eax)89D0(mov eax,edx)99(cdq)F7FB(idiv ebx)89C3(mov ebx,eax)pop eax
+  : /%` >S0 $99D08950, ,4 $C389FBF7, ,4 $58, ,1 ;
+  see also: m/mod /% / %  ff.boot
+
+min` ( n2 n1 -- n ) returns the minimum of two signed numbers
+  : min` <` IF` swap` THEN` nip` ;
+max` ( n2 n1 -- n ) returns the maximum of two signed numbers
+  : max` >` IF` swap` THEN` nip` ;
+within ( n x y -- ; nz? ) if x=<n<y or(y=<x and(n<y or x=<n)), returns nzTRUE
+  (i.e. i386 Z flag reset), otherwise returns zFALSE (i.e. Z flag set).
+  This works for both unsigned and signed integers (but not a mixture).
+  Another way to think about "whitin" is to consider the integers set as
+  a circle wrapping around from MAXINT (-1+2^32 unsigned, -1+2^31 signed)
+  to MININT (0 unsigned, -2^31 signed); now consider the increasing range
+  from x upto and excluding y (giving an empty range if x=y):
+  if n is in this range, "within" returns nzTRUE, otherwise zFALSE.
+  : within over- -rot - u> 2drop nzTRUE ? zFALSE ;
+  see also: min max BOOL conditionnals  ff.ff
+
+bounds` ( @ # -- @+# @ ) converts start address "@" under count "#"
+  into limit address "@+#" under start address
+  : bounds` over+` swap` ;
+  see also: 2dup+  ff.boot
+
+  -------------
+  MEMORY ACCESS
+
+@` ( @ -- n ) "fetch" 32 bits from @ (LSByte at @, MSByte at @+3)
+  :  @` $1B8B, s09 ; \ mov ebx,[ebx]
+c@` ( @ -- c ) fetch 8-bits byte from @, zero-extended into TOS 32 bits
+  : c@` $1BB60F, ,1 s09 ; \ movzx ebx,byte[ebx]
+w@` ( @ -- w ) fetch 16-bits word from @, zero-extended into TOS 32 bits
+  : w@` $1BB70F, ,1 s09 ; \ movzx ebx,word[ebx]
+2@` ( @ -- lo hi ) fetch 64-bits from @ (hi 32-bits at @, lo 32-bits at @+4)
+  : 2@` @+` swap` @` swap` ;
+  see also: @ dup@ @+ !  ff.boot
+
+dup@` ( @ -- @ n ) fetch 32 bits from @ (LSByte at @, MSByte at @+3)
+  : dup@`  over` $1A8B, s09 ; \ mov ebx,[edx]
+dupc@` ( @ -- @ c ) fetch 8-bits byte from @, zero-extended into TOS 32 bits
+  : dupc@` over` $1AB60F, ,1 s09 ; \ movzx ebx,byte[edx]
+dupw@` ( @ -- @ w ) fetch 16-bits word from @, zero-extended into TOS 32 bits
+  : dupw@` over` $1AB70F, ,1 s09 ; \ movzx ebx,word[edx]
+  see also: dup@ @ @+ !  ff.boot
+
+@+` ( @ -- @+4 n ) fetch next 32 bits long
+  : @+` dup@` swap` 4+` swap` ;
+c@+` ( @ -- @+1 n ) fetch next 8 bits byte, zero-extended into TOS
+  : c@+` dupc@` swap` 1+` swap` ;
+w@+` ( @ -- @+2 w ) fetch next 16 bits word, zero-extended into TOS
+  : w@+` dupw@` swap` 2+` swap` ;
+  see also: @+ @ dup@ !  ff.boot
+
+!` ( n @ -- ) stores 32-bits "n" at memory address "@"
+  : !` tuck!` drop` ;
+c!` ( c @ -- ) stores 8-bits "c" at memory address "@"
+  : c!` tuckc!` drop` ;
+w!` ( w @ -- ) stores 16-bits "w" at memory address "@"
+  : w!` tuckw!` drop` ;
+2!` ( lo hi @ -- ) stores 64-bits at memory address "@" (hi at @, lo at @+4)
+  : 2!` tuck!` 4+` !` ;
++!` ( n @ -- ) adds "n" into memory address "@"
+  : +!` tuck+!` drop` ;
+-!` ( n @ -- ) subtracts "n" from memory address "@"
+  : -!` tuck-!` drop` ;
+  see also: ! over! tuck! 2dup! on @  ff.boot
+
+over!` ( @ n -- @ ) stores "n" at memory address "@" and keeps address
+  : over!` swap` tuck!` ;
+overc!` ( @ c -- @ ) stores "c" at memory address "@" and keeps address
+  : overc!` swap` tuckc!` ;
+overw!` ( @ w -- @ ) stores "w" at memory address "@" and keeps address
+  : overw!` swap` tuckw!` ;
+over+!` ( @ n -- @ ) adds "n" into memory address "@" and keeps address
+  : over+!` swap` tuck+!` ;
+over-!` ( @ n -- @ ) subtracts "n" from memory address "@" and keeps address
+  : over-!` swap` tuck-!` ;
+  see also: over! ! tuck! 2dup! on @  ff.boot
+
+tuck!` ( n @ -- @ ) stores "n" at memory address "@" and keeps address
+  : tuck!` 2dup!` nip` ;
+tuckc!` ( c @ -- @ ) stores "c" at memory address "@" and keeps address
+  : tuckc!` 2dupc!` nip` ;
+tuckw!` ( w @ -- @ ) stores "w" at memory address "@" and keeps address
+  : tuckw!` 2dupw!` nip` ;
+tuck+!` ( n @ -- @ ) adds "n" into memory address "@" and keeps address
+  : tuck+!` 2dup+!` nip` ;
+tuck-!` ( n @ -- @ ) subtracts "n" from memory address "@" and keeps address
+  : tuck-!` 2dup-!` nip` ;
+  see also: tuck! ! over! 2dup! on @  ff.boot
+
+2dup!` ( n @ -- n @ ) writes NOS 32 bits contents into memory at address in TOS
+  : 2dup!`  $1389, s09 ; \ mov [ebx],ebx
+2dupc!` ( c @ -- c @ ) writes NOS 8 bits contents into memory at address in TOS
+  : 2dupc!` $1388, s09 ; \ mov [ebx],dl
+2dupw!` ( w @ -- w @ ) writes NOS 16bits contents into memory at address in TOS
+  : 2dupw!` $66 c, $1389, s09 ; \ mov [ebx],dx
+2dup+!` ( n @ -- n @ ) adds "n" into memory address "@" and keeps both
+  : 2dup+!` $1301, s09 ; \ add [ebx],edx
+2dup-!` ( n @ -- n @ ) subtracts "n" from memory address "@" and keeps both
+  : 2dup-!` $1329, s09 ; \ sub [ebx],edx
+  Note: the contents of NOS and TOS remain unchanged
+  see also: 2dup! ! over! tuck! on @  ff.boot
+
+on` ( @ -- ) sets all bits contained at address @
+  : on` -1 lit` swap` !` ;
+off` ( @ -- ) clears all bits contained at address @
+  : off` 0 lit` swap` !` ;
+  see also: on ! @  ff.boot
+
+  --------------------
+  MEMORY BLOCKS ACCESS
+
+erase ( @ # -- ) clears memory   : erase 0 fill ;
+fill ( @ # c -- ) fills memory from address "@" with "#" bytes of value "c"
+move ( @src @dst # -- ) reads # bytes from @src and writes them to @dst,
+  by increasing (resp. decreasing) addresses if @src>=@dst (resp. @src<@dst)
+  such that the move is always safe even if the two address ranges overlap.
+  see also: erase fill cmove $-  ff.asm
+
+cmove` ( @src @dst # -- ) compiles inline code to read # bytes from @src
+  and write them to @dst, by increasing addresses one byte at a time.
+  Note: if @dst is between @src and @src+#, the contents from @src to @dst
+  will be replicated, which may not be the desired behaviour...
+  Note: the memory side-effect is the same as "place" but not the stack effect
+  : cmove` swap` place` drop` ;
+  see also: place erase fill move $-  ff.boot
+
+place` ( @src # @dst -- @dst ) compiles inline code to read # bytes from
+  @src and write them to @dst, by increasing addresses one byte at a time.
+  Note: if @dst is between @src and @src+#, the contents from @src to @dst
+  will be replicated, which may not be the desired behaviour...
+  Note: the memory side-effect is the same as "move" but not the stack effect
+  \ 89DF(mov edi,ebx)89D1(mov ecx,edx) 5E(pop esi)F3A4(rep movsb)5A(pop edx)
+  : place` $D189DF89, s08 s08 >C1 $5AA4F35E, ,3 s1 ;
+  see also: cmove move fill erase $-  ff.boot
+
+$- ( @1 @2 # -- n ) compares the string starting at address "@1" with
+  the string starting at address "@2", both "#" bytes long: compares
+  byte per byte by increasing addresses while the bytes are equal, or
+  until "#" bytes are compared; returns the difference between the
+  last two compared bytes (i.e. null means that the two string are equal)
+  see also: move place fill search  ff.asm
+
+search ( @ # @' #' -- @r #r ; z:match ) in the string starting at address "@"
+  for "#" bytes, search the first occurence of string starting at address "@'"
+  for "#'" bytes; if a matching substring is found, returns its base address
+  and the remaining searched-string count of bytes and the i386 Z flag set;
+  otherwise returns the original searched string address and size and the
+  i386 Z flag reset (as would do nzFALSE).
+  see also: $-  ff.asm
+
+  -------------
+  COMPILER CORE
+
+lit` ( n -- ; -- n ) compiles a literal, i.e. compiles code with n as
+  immediate data, which the code will push at runtime onto the DATAstack.
+  see also: ` create variable constant literalcompiler compiler  ff.asm
+
+'` ( -- ) converts a compiled call into a literal:
+  if a call was compiled just before, "'" converts it into a literal,
+  which at runtime will push the call target address onto the DATAstack
+  (typically for use with "alias" or "!^" or "execute" or "call,"); otherwise
+  throws an exception with the error message "is not preceded by a call".
+  Note: this is a postfix replacement for the usual Forth prefix "[']"
+  : '` -call lit` ;
+  see also: :^ @^ !^ ^^ alias execute  ff.boot
+
+-call ( -- @ ) if a call was compiled just before, returns its target address,
+  otherwise throws an exception with error-message "is not preceded by a call"
+  see also: ? ' ^@ ^! ^^  ff.boot
+
+call, ( @ -- ) compiles a "call" with the address in TOS as target address
+  : call,  rst  $E8 c,  here 4+ - ,  here callmark! ;
+callmark ( -- @ ) compiler state variable: stores the value that the
+  compilation pointer had just after compiling the last call, or null
+  to prevent any transformation on the last compiled call (such as after
+  a "THEN")
+  see also: call, ;; compiler THEN  ff.asm
+
+;;` ( -- ) compiles a "ret" instruction, unless the last compiled instruction
+  was a "call", which is instead changed to an unconditionnal jump (short
+  or long depending on the call offset): this is called "tail recursion"
+  optimization, which often simplifies control structures; this may be
+  switched off/on permanently by storing a null/non-null value into "tailrec",
+  or may be inhibited just once by storing a null value into "callmark"
+  just before ";;" or ";" or ";THEN".
+tailrec ( -- @ ) compiler state variable: when null (resp. non-null, initial)
+  inhibits (resp. allows) tail-recursion optimizations.
+  see also: ;; ; ;THEN callmark call, tailrec  ff.asm
+
+anonymous is the concept that makes FreeForth an original "STATE-free"
+  implementation of the Forth language, i.e. with no interpret/compile
+  STATE variable, and therefore no "STATE-smart" compiler complexity.
+  Instead, FreeForth is only compiling, and keeps in its symbol table
+  a "header" for each "named" definition (i.e. created with ":" or any
+  other "defining word" which creates a header in the compiler symbol table),
+  but when it finishes compiling an "anonymous" definition (with the ";" macro),
+  as it has no header to refer to it later, FreeForth immediately executes it,
+  and recycles the anonymous definition code memory (in fact the memory is
+  recycled before, to allow the anonymous definition execution to compile
+  code there ... hopefully without overwriting the executing code ;-)
+  see also: : ; anon anon:  ff.asm
+
+anon:` ( -- ) resets the compiler state as it must be before starting a new
+  anonymous definition
+  : anon:`  here anon!  0 SC c!  0 callmark! ; \ prevent tail-recursion
+anon ( -- @ ) compiler state variable: stores the entry point of the
+  current anonymous definition, or null if compiling a named definition.
+  see also: anon: : ; anonymous  ff.asm
+
+;` ( -- ) this is the kernel of FreeForth interactivity!
+  If the compilation pointer didn't progress since last execution of ";"
+  simply returns; otherwise calls ";;" to close the current definition,
+  then if "anon" is non-null, indicating that we just finished to compile
+  an anonymous definition, then automatically resets the compilation pointer
+  to the address in "anon" and executes a call at this address: this is
+  where compiled code gets executed, i.e. where the user gets interactivity;
+  then, or if "anon" was null, resets "anon" to the address in the compilation
+  pointer, and finally returns.
+  see also: : ;; ; anon anon: anonymous  ff.asm
+
+[` ( -- anon SC ) suspends the compilation of the current definition
+  and starts the compilation of a new anonymous definition
+  : [`  anon@ SC c@  0 SC c!  here anon! ;
+]` ( anon SC -- ) completes and executes the current anonymous definition
+  started by "[" and resumes the compilation of the definition suspended by "["
+  : ]` 2>r ;` 2r> SC c! anon! ;
+  see also: [ ] ;  ff.boot
+
+H ( -- @ ) compiler state variable: symbol table allocation pointer,
+  stores the head address of the compiler's separate symbol table (headers),
+  which grows backwards (from "tib"), sharing with the forwards-growing
+  compilation pointer the "heap" space, which is one of the only two
+  FreeForth allocatable memory spaces, as shown in this schematic memory map
+  (underlined with corresponding pointers):
+  [binary code and data> heap <headers][source code> blocks][ ]  < stacks ]
+  :                 ebp^      ^H    tib:  tin^>  tp^     eob: ;   eax^ esp^
+  Growing backwards, H also points on the base of the last defined header
+  (in usual Forth where headers grow forward, this is another variable LAST).
+  see also: header find words  ff.asm
+
+header ( @ # xt ct -- ) creates a header with string starting at "@" for "#"
+  characters, with type "ct", and with embedded data "xt".
+  Each header is composed of:
+  . +0: 4 bytes: header embedded data: pointer on code or data, or constant
+  . +4: 1 byte: header type: 0 = ptr on code, 1 = ptr on data or constant
+  . +5: 1 byte: header name string size (null-terminator excluded)
+  . +6: size bytes: header name string, null-terminated
+  source code in ff.asm, functionally equivalent to:
+  : header  2>r tuck  0 H@ 1- tuckc!  over- place  \ -- # H@-#-1 | == xt ct
+    1- tuckc!  r> swap 1- tuckc!  r> swap 4- tuck!  H! ;
+  see also: H : :^ alias create variable constant mark words compiler classes
+
+find ( @ # -- ptr 0 | @ # ) looks in the symbol table for a header
+  matching the string "#" bytes long stored at "@";
+  if a match is found, the header base address is stored in "which",
+  and the header pointer field is returned in NOS and a null in TOS;
+  otherwise, NOS and TOS are returned unchanged (and TOS is non-null)
+which ( -- @ ) compiler state variable: stores the base address of the
+  last header found by "find"
+  see also: find H header words  ff.asm
+
+>in ( -- @ ) compiler state variable: stores the address of the next
+  source character to be parsed
+tp ( -- @ ) compiler state variable: stores the address _after_ the last
+  source character to be parsed
+tib ( -- @ ) constant, returns the "terminal-input-buffer" base address;
+  this is the base of the input sources "stack" used by "needs"
+eob ( -- @ ) constant, returns the "end-of-blocks" limit address;
+  this is the maximum address used for reading input sources, or
+  for accessing memory in blocks (see source file "bed.ff")
+\` ( <line> -- ) ignore comment to end of line
+  : \` 2 >in -! lnparse 2drop ;  \ 2>in-! for \-at-end-of-line
+(` ( <line> -- ) ignore comment upto closing closing-paren
+  : (` ') parse 2drop ;
+EOF` ( -- ) ignore comment upto end-of-file
+  : EOF` tp@ >in! ;
+  see also: >in tp tib eob \ ( EOF parse wsparse lnparse needs  ff.asm ff.boot
+
+parse ( c -- @ # ) parses the next word from the input source,
+  using as separator the character c: starting from the address stored
+  in the compiler variable ">in", skips all separators, stores the address
+  of the first non-separator (or the address stored in "tp" if reached)
+  into NOS, then skips all non-separators and stores the address after the
+  first separator (or the address stored in "tp" if reached) into ">in",
+  and stores the number of non-separators into TOS.
+  Note: at the end of source, TOS is therefore returned null
+  see also: wsparse lnparse >in tp  ff.asm
+
+wsparse ( -- @ # ) parses the next word from the input source, using as
+  separator whitespace, i.e. ASCII codes among NUL HT LF VT FF CR SPACE
+  Note: this greatly simplifies parsing of files and of the command line
+  Note: this automatically skips empty lines
+  see also: parse lnparse  ff.asm
+
+lnparse ( -- @ # ) skip empty lines if any, then parse to end-of-line;
+  if at end-of-file, "#" is returned null.
+  Lin: lnparse 10 parse ;
+  Win: lnparse 10 parse \ must handle CR+LF:
+       2dup+ 1- c@ 13- 0= drop IF 1- THEN  IF ;THEN 2drop lnparse ;
+  Note: this automatically skips empty lines
+  see also: parse wsparse  fflinio.asm/ffwinio.asm
+
+` i.e. the backquote character (ASCII 96)
+backquote "`" is used a lot in FreeForth.
+  As a final character of a word name, backquote identifies this word
+  as a FreeForth macro: when used without its final backquote, the word
+  is "immediate"-ly executed at compile time; but when used with its
+  final backquote, it is normally compiled into a call: this makes macro
+  definitions very easy, in particular when in terms of other macros,
+  which happens a lot in FreeForth compiler (other Forth systems require
+  the heavy use of "[POSTPONE]" to do the same thing).
+  As an initial character of a word name, backquote identifies this word
+  as hidable: when "hid'm" is later executed, it removes from the compiler
+  symbol table all the headers with a backquote initial; this is much
+  easier to use than vocabularies, or even RetroForth's "loc:".
+  see also: compiler ' hid'm
+
+compiler ( -- ) this is the (vectorized) compiler loop:
+  . calls "wsparse" to get the next word from the input source;
+  . if its string size is null, then returns because source end was reached;
+  . otherwise appends a backquote "`" and looks a first time in the compiler
+    symbol table for a matching header;
+  . if found with the appended backquote, executes its "immediate behavior"
+    (also referred as "macro behavior") which depends on the header type:
+    + if "code" type (0), executes a call to the header-embedded address
+    + if "data" type (1), pushes the header-embedded address/data on DATAstack
+    + header types 2 to 7 are user-definable (see "classes"), their immediate
+      behavior is expected to find the header-embedded data on DATAstack top
+    then the compiler loop loops again;
+  . otherwise removes the appended backquote and looks a second time in the
+    compiler symbol table for a match;
+  . if found without the appended backquote, executes its "postpone behavior"
+    which depends on the header type:
+    + if "code" type (0), compiles a call to the header-embedded address,
+    + if "data" type (1), compiles the header-embedded data as a literal
+      (i.e. which at runtime will push the address onto the DATAstack)
+    + header types 2 to 7 are user-definable (see "classes"), their postpone
+      behavior is expected to find the header-embedded data on DATAstack top
+    then the compiler loop loops again;
+  . otherwise (if not found twice), calls the literalcompiler and loops again.
+  see also: eval wsparse find literalcompiler classes  ff.asm
+
+literalcompiler is invoked by the compiler when it can't find in its
+  symbol table the word that it just parsed; literalcompiler is driven
+  by the last character of the word string:
+  " final invokes the literal-string compiler, which is driven by the initial:
+    see stringcompiler
+  +-*/%&|^ finals call "find" to look in the compiler symbol table for a
+    header matching the string (without final), and if found with a "data"
+    type, get the number in its pointer field, otherwise call "number" to
+    convert the string (without final) into a number; then these finals
+    compile their corresponding binary-op instruction (+=add -=sub *=mul /=div
+    %=mod &=and |=or ^=xor) with the above number as immediate argument, and
+    TOS as destination; simple and efficient "manual" optimization :-)
+  , final calls "find" or "number" as above, and compiles runtime code which
+    will store the obtained number at the location pointed at runtime by the
+    compilation pointer (i386 register ebp), which will have to be incremented
+    separately; useful for macros such as "s1" which compile inline code
+  @ final calls "find" or "number" as above, and compiles runtime code which
+    will read memory cell at that address and push its contents onto DATAstack
+  ! final calls "find" or "number" as above, and compiles runtime code which
+    will store TOS at the address and pop DATAstack
+  _ final calls "find" or "number" as above, and compiles runtime code which
+    will replace TOS with the obtained number; this saves a "drop" (and push)
+  Otherwise, literalcompiler calls "number" to convert the string
+  (with its final) into a number, and compiles a runtime (see "lit")
+  which will push that number onto the DATAstack.
+  For every call to "number", if the conversion fails, literalcompiler
+  falls back by calling the vector "notfound".
+  see also: compiler wsparse find notfound type here  ff.asm
+
+stringcompiler is invoked by the compiler when a literal is terminated by a "
+," i.e. string with final '"' and initial ',': ,XYZ"
+  compiles the string with no count and no preceding call
+  (this is useful to compile inline any data and/or code)
+!" i.e. string with final '"' and initial '!': !XYZ"
+  compiles a counted string preceded by a call to a hidden runtime
+  which will call "throw" with the counted-string address in TOS;
+  if not catched, the exception will display: <-error: XYZ
+"" i.e. string with final '"' and initial '"': "XYZ"
+  compiles a counted string preceded by a call to a hidden runtime
+  which will push onto the DATAstack the string address and count (-- @ #)
+  and will continue execution after the compiled string
+." i.e. string with final '"' and initial '.': .XYZ"
+  compiles a counted string preceded by a call to a hidden runtime
+  which will push onto the DATAstack the string address and count,
+  will call "type", and continue execution after the compiled string
+  Note: some characters, between the initial and final, are interpreted
+  by the literal-string compiler:
+  _ is substituted by a space (source strings must have no embedded space)
+  ^ toggles bit6 of following character (^@=0 ^A=1 ^B=2 ... ^?=127)
+  ~ toggles bit7 of last compiled byte  (@~=$C0 A~=$C1 and ^@~=$80)
+  " is simply ignored (."hello" = .hello")
+  \ compiles the next character literally (\_=_ \^=^ \~=~ \"=" \\=\)
+  Note: a source string must have no embedded space, such that FreeForth
+        compiler can "wsparse" it all at once; in your source strings,
+        substitute every space with an underscore, that "stringcompiler"
+        will in turn compile as a space, and use "\_" for every underscore.
+  see also: literalcompiler stringcodes  ff.asm
+
+stringcodes in quoted source strings (compiled by stringcompiler)
+       0  1  2  3  4  5  6  7  8  9  A  B  C  D  E  F
+  00: ^@ ^A ^B ^C ^D ^E ^F ^G ^H ^I ^J ^K ^L ^M ^N ^O
+  10: ^P ^Q ^R ^S ^T ^U ^V ^W ^X ^Y ^Z ^[ ^\ ^] ^^ ^_  prefix ^ toggles bit6
+  20:  _  ! \"  #  $  %  &  '  (  )  *  +  ,  -  .  /  replace spaces with _
+  30:  0  1  2  3  4  5  6  7  8  9  :  ;  <  =  >  ?  ignore every " quotes
+  40:  @  A  B  C  D  E  F  G  H  I  J  K  L  M  N  O
+  50:  P  Q  R  S  T  U  V  W  X  Y  Z  [ \\  ] \^ \_  prefix special with \
+  60:  `  a  b  c  d  e  f  g  h  i  j  k  l  m  n  o
+  70:  p  q  r  s  t  u  v  w  x  y  z  {  |  } \~ ^?  suffix ~ toggles bit7
+  80: ^@~ etc. upto ^O~
+  90: ^P~ etc. upto ^_~
+  A0:  _~ etc. upto  /~
+  B0:  0~ etc. upto  ?~
+  C0:  @~ etc. upto  O~
+  D0:  P~ etc. upto \_~
+  E0:  `~ etc. upto  o~
+  F0:  p~ etc. upto ^?~
+  see also: stringcompiler  ff.asm
+
+number ( @ # -- n 0 | @ # ) converts a literal string into a number;
+  if the conversion succeeds, the input string address in NOS and count in
+  TOS are replaced with the converted number in NOS and a null in TOS;
+  otherwise NOS and TOS are returned unchanged (and TOS is non-null).
+  The conversion is context-free (unlike usual Forth systems, which use
+  an implicit conversion "base" variable), it starts in decimal and is
+  driven by a table indexed by the string characters, which are interpreted
+  as follows (look at FreeForth sources for examples):
+  - as string initial changes the number sign to negative
+  $ changes the conversion current base to 16 (hexadecimal)
+  & changes the conversion current base to 8 (octal)
+  % changes the conversion current base to 2 (binary)
+  # changes the conversion current base to the number converted so far
+  0..9 count for 0..9 digits, or fail if >= current base
+  A..Z or a..z count for 10..35 digits, or fail if >= current base
+  -_: allow gregorian date and/or sexagesimal time conversions (see .dt)
+  ',./ are simply ignored  |
+  other characters fail    | (this is easy to change in ff.asm)
+  examples:  $100 = &400 = %1'0000'0000 = 256   -3#21$08 = -$708 = -1800
+             1956-7-23 = 714'558   2006-7-2_19:33:20 = 200'000'000
+  see also: literalcompiler .dt  ff.asm
+
+notfound ( @ # -- ) user redirectable vector, by default throws the
+  exception with error-message "???"; this is the place where user code
+  may take a last chance to compile a string, parsed but not understood
+  by the compiler.
+  see also: literalcompiler :^ throw  ff.asm
+
+classes ( -- @ ) base address of the compiler's classes table, indexed by
+  the header types; each table entry contains two executable addresses:
+  . the code entry of the "immediate behavior", executed when a word is
+    found in the compiler's symbols table with an appended backquote
+  . the code entry of the "postpone behavior", executed when a word is
+    found in the compiler's symbols table without appended backquote
+  Header types 0 and 1 are predefined (type 2 is reserved for floats):
+  . type 0 "code" is used by ":" for subroutines, which code entry address is
+    either immediately executed, or postponed by compiling a call instruction
+  . type 1 "data" is used by "create" for variables and constants, which
+    address/data is either immediately pushed on DATAstack, or postponed by
+    compiling a literal which will push the address/data on DATAstack
+  . type 2 "float" is used by "`f:" for FPU macros (see ff.ff)
+  Header types 3 to 7 are user definable in the following way:
+  . define an immediate behavior for type X (let's call it here "immediateX")
+  . define a postpone behavior for type X (let's call it here "postponeX")
+  . execute the following to setup the compiler's classes table for type X:
+    postponeX ' immediateX ' classes &X0+ 2! ;
+  then you can define a "defining word" calling "header" to create the symbol
+  table entry with type X (see for example "`f:`" in ff.ff).
+  see also: compiler  ff.asm
+
+  --------------
+  DEFINING WORDS
+
+:` ( <name> -- ) creates a new subroutine entry point named "name":
+  if an anonymous definition is pending then calls ";" to execute it;
+  otherwise it's another entry point in an already open named definition,
+  then calls "rst" to reset default registers allocation on entry, then
+  finally points the created header on the address in the compilation pointer.
+  Typically, use ":" to create a new enty point in code; as headers are
+  separate, there may be several entry points sharing the same exit point(s);
+  some entry points may also be used as target for "tail recursion"
+  source code in ff.asm, functionally equivalent to:
+  : :` anon@ 0- drop IF ;` 0 anon! THEN rst wsparse here 0 header ;
+  see also: :` ;; ; anon anonymous  ff.asm
+
+alias` ( @ <name> -- ) creates a synonym for a header of "code" type:
+  calls ":" and changes the header pointer to "@".
+  Typically, use "'" to obtain the address "@" before using "alias"
+  : alias`  :`  H@ !  anon:` ;
+  see also: : :^ alias mark  ff.boot
+
+create` ( <name> -- ) creates a header with default "data" type:
+  calls ":", changes the header type to data, and resets "anon" to the
+  address in the compilation pointer to open a new anonymous definition.
+  To allocate (and initialize) space for some data, use "allot" (or ",").
+  A word created with "create" will compile a runtime with the data
+  address as immediate data, that it will push onto the DATAstack
+  : create`  :`  1 H@ 4+ c!  anon:` ;
+  see also: : create variable constant anon anonymous  ff.boot
+
+variable` ( <name> -- ; -- @ ) creates a variable initially null:
+  calls "create", allocates 4 bytes and clears them, and resets "anon" to
+  the address in the compilation pointer to open a new anonymous definition.
+  A word created with "variable" will compile a runtime with the data
+  address as immediate data, that it will push onto the DATAstack
+  : variable` create` 0 ,  anon:` ;
+  see also: create variable constant anonymous  ff.boot
+
+constant` ( n <name> -- ; -- n ) creates a constant with value n:
+  calls "create" and replaces the header address with the constant value.
+  A word created with "constant" will compile a runtime with the constant
+  value as immediate data, that it will push onto the DATAstack
+  : constant` create`  H@ !  anon:` ;
+  example:  tib $20000+ constant `sob  \ start of blocks (see bed.ff)
+equ` ( n <name> -- ; -- n ) a shorter, assembly friendly, alias for constant
+  constant` ' alias equ` \ defined in ff.ff
+  see also: create constant  ff.boot
+
+:^` ( <name> -- ) creates a user redirectable vector:
+  calls ":" and compiles default redirection code pointing just after itself
+  (push $+6 ret), as also does "^^"
+  : :^` :` $68 c, here 5+ , $C3 c, ; \ push long  ret
+  see also: : :^ @^ ' !^ ^^  ff.boot
+
+^^` ( -- ) resets vector: if a call was compiled just before, converts it
+  to runtime code which will reset the vector target address to its default,
+  such that the vector will execute the code compiled just after its
+  redirection code; otherwise throws an exception with error message
+  "is not preceded by a call".
+  : ^^` -call $05C7, 2 allot dup 1+ , 6+ , ; \ mov[],long
+  see also: :^ @^ !^ ^^  ff.boot
+
+!^` ( @ -- ) sets vector contents: if a call was compiled just before,
+  converts it to runtime code which will set the vector target address
+  from TOS; otherwise throws an exception with error message
+  "is not preceded by a call".
+  : !^` -call $1D89, s08 1+ , drop` ; \ mov [],ebx
+  see also: :^ @^ !^ ^^  ff.boot
+
+@^` ( -- @ ) gets vector contents: if a call was compiled just before,
+  converts it to runtime code which will read the vector target address
+  and will push it onto the DATAstack; otherwise throws an exception
+  with error message "is not preceded by a call".
+  : @^` -call over` $1D8B, s08 1+ , ; \ mov ebx,[]
+  see also: :^ @^ !^ ^^  ff.boot
+
+  ------------
+  FLOW-CONTROL
+
+execute ( @ -- ) pops TOS and executes a call at the address it contained
+  : execute >r ;
+reverse` ( -- ) compiles inline code to exchange the return address of the
+  subroutine executing "reverse" with the address of the code compiled after
+  "reverse", such that this code is scheduled to be executed when the caller
+  (of the subroutine which executed "reverse") executes a "ret".
+  This seems tricky, but allows powerful programming techniques.
+  : reverse` $D1FF59, ,3 ; \ pop ecx  call ecx
+  see also: execute reverse catch throw  ff.boot
+
+catch ( @ -- err ) pushes an exception-frame on top of the CALLstack,
+  then pops TOS and executes a call at the address it contained;
+  if the call returns, i.e. if no "throw" is executed before, then
+  pushes a "0" on the DATAstack; otherwise see "throw"
+  : catch  push eax  push edx  push[xfp]  mov[xfp],esp \ push exception-frame
+           mov ecx,ebx  mov ebx,edx  xchg eax,esp  pop edx  xchg eax,esp
+           call ecx  pop[xfp]  add esp,8 \ pop exception-frame, push 0:
+           xchg eax,esp  push edx  xchg eax,esp  mov edx,ebx  xor ebx,ebx  ret
+throw ( err -- ) raises an exception identified by err:
+  restores the two stack pointers and NOS values saved in the last
+  exception-frame pushed by "catch", keeps "err" in TOS as apparent
+  result of "catch", and resumes execution after the "catch" which
+  pushed the last exception-frame.
+  : throw  mov esp,[xfp]  pop[xfp]  pop edx  pop eax  ret
+  Note: the top-level main-loop "catch" expects "err" to be the address of a
+  counted-string error-message: see "stringcompiler" (final '"' initial '!')
+  for howto compile such error messages (example:  !"Error_message")
+  see also: catch throw execute CALLstack  ff.asm
+
+flow-control  The most basic level of flow-control is supported by 3 macros:
+  ":" which defines code entry points (which assemblers call "labels")
+      which are compiled as "call" instructions when referenced
+  ";" which compiles a "ret" instruction, unless the instruction compiled
+      just before was a "call", which it converts into an unconditional
+      "jmp" instruction (this is also called "tail-recursion")
+  "?" which expects the instruction compiled just before it to be a "call",
+      that it converts into a conditional jump instruction, which condition
+      is either specified before (see "conditionals"), or by default "jump
+      if non-zero" (i.e. if i386 zero-flag is clear)
+  This basic flow-control support requires source code to be ordered such
+  that every call or jump instruction refers to a previously defined entry
+  point, which is almost always possible (except for co-recursive programs
+  or for state automata, where the reference-loops may be broken by using
+  redirectable vectors: see ":^"), sometimes at the cost of some extra
+  calls or jumps.
+  Higher levels of flow-control, supporting forward references and exception
+  handling with nestable control structures, are supported by sets of macros:
+  "IF" "ELSE" "SKIP" "THEN" ";THEN" support independent forward references
+  "BEGIN" "START" "TIMES" "RTIMES" open a looping control block
+  "WHILE" "ENTER" "TILL" "BREAK" "AGAIN" control flow inside a control block,
+    may be used inside "IF ... ELSE ... THEN" (nested) control structure(s)
+  "REPEAT" "UNTIL" "END" close a looping control block
+  "catch" "throw" handle exceptions through several call-levels
+  See each individual macro for detailed help.
+  see also: conditionals +longconds
+
+conditionals  Usual Forth systems compute boolean values as integers
+  on the DATAstack, and pop them when testing them for branching
+  (with "IF" "WHILE" "UNTIL").
+  FreeForth instead relies on the processor's status-register condition-flags
+  and lets the programmer write instructions to:
+  1) modify these flags (all arithmetical and logical instructions do)
+  2) select which flag(s) will be tested by the next conditional jump
+  3) cleanup or reorder the stack (without modifying the flags) or not
+     (this saves a lot of DATAstack push/pops)
+  4) select the conditional jump target address either directly with "?",
+     or indirectly with structured-control words such as "IF", "WHILE" etc.
+  Comparing words ("<" ">=" "u<" etc) realise points 1 and 2 at once: point 1
+  by compiling a "cmp edx,ebx" instruction (which sets the condition-flags)
+  which compares NOS relative to TOS, point 2 by storing the conditional-jump
+  opcode into a compiler variable.
+  TOS testing requires points 1 and 2 to be realized separately: for point 1,
+  unless TOS results from an arithmetical or logical instruction (modifying
+  the flags), use "0-" to compile an "or ebx,ebx" instruction (more efficient
+  than "cmp ebx,0") which modifies the flags depending on the value in TOS;
+  for point 2, use "0=" "0<>" "0<" "0<=" "0>" or "0>=".
+  When a flag must be passed to or returned from a subroutine, it may be
+  "normalized" with nzTRUE or zFALSE (which resp. sets or clears the i386
+  Zero status flag) for a following direct use by IF/WHILE/TILL/UNTIL.
+  Whenever a flag must be passed on DATAstack or stored into memory,
+  use "BOOL" to convert it to an interger pushed onto DATAstack.
+  see also: flow-control +longconds
+
++longconds` ( -- ) ff.boot default conditionals are limited to byte offsets
+  for forward jumps (backward jumps use byte offsets when possible, otherwise
+  long offsets): this is efficient and encourages programmers to write small
+  definitions. Would you ever need to write bigger definitions requiring long
+  offsets, +longconds` switches to long forward conditionals
+-longconds` ( -- ) switches back from +longconds` to byte forward conditionals
+  WARNING: DON'T switch forth and back in the middle of a control structure!
+  see also: conditionals flow-control  ff.ff
+
+?` ( -- ) expects the instruction compiled just before it to be a "call",
+  that it converts into a conditional jump instruction, which condition
+  is either specified before (see "conditionals"), or by default "jump
+  if non-null"; otherwise throws an exception with error-message
+  !"not_preceded_by_a_call"
+  see also: flow-control -call  ff.boot
+
+0>`  ( -- ) positive      : 0>=` $7F `?1 ; \ jg.b
+0<=` ( -- ) non-positive  : 0>=` $7E `?1 ; \ jle.b
+0>=` ( -- ) non-negative  : 0>=` $7D `?1 ; \ jge.b
+0<`  ( -- ) negative      : 0<`  $7C `?1 ; \ jl.b
+0<>` ( -- ) non-null      : 0<>` $75 `?1 ; \ jnz.b
+0=`  ( -- ) null          : 0=`  $74 `?1 ; \ jz.b
+C1?` ( -- ) carry-set     : C1?` $73 `?1 ; \ jnc.b
+C0?` ( -- ) carry-clear   : C0?` $72 `?1 ; \ jc.b
+  The above words select one condition for the next conditional jump
+0-` ( -- ) inlines comparison TOS.versus.zero to set the i386 conditional-flags
+  : 0-` $DB09, s09 ; \ or ebx,ebx
+`?1 ( c -- ) sets `?#     : `?1 `?# c! ;
+`?# ( -- @ ) compiler hidden state variable: stores the conditional-jump
+  opcode to be compiled by the next "IF" or "WHILE" or "TILL" or "UNTIL"
+  see also: 0> <> conditionals  ff.boot
+
+<>`  ( -- ) non-equal     : <>`  $75 `?2 ; \ jnz.b
+=`   ( -- ) equal         : =`   $74 `?2 ; \ jz.b
+>`   ( -- ) greater       : >`   $7F `?2 ; \ jg.b
+<=`  ( -- ) non-greater   : <=`  $7E `?2 ; \ jng.b
+>=`  ( -- ) non-less      : >=`  $7D `?2 ; \ jnl.b
+<`   ( -- ) less          : <`   $7C `?2 ; \ jl.b
+u>`  ( -- ) above         : u>`  $77 `?2 ; \ ja.b  (unsigned greater)
+u<=` ( -- ) non-above     : u<=` $76 `?2 ; \ jna.b (unsigned non-greater)
+u>=` ( -- ) non-below     : u>=` $73 `?2 ; \ jnb.b (unsigned non-less)
+u<`  ( -- ) below         : u<`  $72 `?2 ; \ jb.b  (unsigned less)
+  The above words inline code to compare NOS.versus.TOS, and select one
+  condition for the next conditional jump (unsigned comparisons are u-prefixed)
+`?2 ( c -- ) inlines comparison NOS.versus.TOS to set i386 conditional-flags
+  : `?2 `?1 $DA39, s09 ; \ cmp edx,ebx
+  see also: <> 0> conditionals  ff.boot
+
+BOOL` ( -- ? ) converts the selected condition into a boolean pushed onto
+  DATAstack: null for false, non-null for true (conventionally all ones = -1)
+  Typically used to pass a boolean argument to a subroutine.
+  : BOOL` 0 lit` IF` ~` THEN` ;
+nzTRUE ( -- ; nz ) sets the i386 nz condition (i.e. resets the i386 Z flag)
+  this avoids to push (and later test&drop) a non-null flag on DATAstack
+  : nzTRUE 1 0- drop ;
+zFALSE ( -- ; z ) sets the i386 z condition (i.e. sets the i386 Z flag)
+  this avoids to push (and later test&drop) a null flag on DATAstack
+  : zFALSE 0 0- drop ;
+  see also: BOOL nzTRUE conditionals  ff.boot
+
+`?off ( n -- n ) hidden compiler word, checks n within signed-byte range
+  : `?off dup 2* over^ -$100& drop IF !"jump_off_range" THEN ;
+`cond ( -- c ) hidden compiler word, inverts condition for IF/TILL/WHILE
+  : `cond `?# c@ 1^ 0<>` ;
+  see also: `?off ff.boot
+
+IF` ( -- ) compiles a forward conditional jump, to be resolved by the
+  right-balancing "ELSE" or "THEN" or ";THEN" or "BREAK" or "AGAIN" macro.
+  This is typically used in control structures with the following patterns:
+  "0- drop IF <nonnull> ELSE <null> THEN", "0- 0< drop IF <negative> ;THEN",
+  "+ 0= drop IF <null> THEN", "BEGIN <...> < drop IF <less> BREAK <...> END"
+  Implementation note: the current registers allocation state is stored
+  into the space allocated for the jump offset, such that the balancing
+  macro may restore the same state before resolving the jump offset
+  : IF` `cond c, here SC c@ c, ;
+  see also: conditionals IF ELSE SKIP THEN ;THEN BREAK AGAIN  ff.boot
+
+CASE` ( x y -- x | x x -- ) compiles an equal-test and a forward conditional
+  jump, to be resolved by the right-balancing "BREAK" or ";THEN" or "AGAIN"
+  This is typically used in a control structure with the following patterns:
+  "BEGIN v  key1 CASE <v=key1> BREAK  key2 CASE <v=key2> BREAK  <default> END"
+  this may also be used in any other control-structure pattern
+  : CASE` =` drop` IF` drop` ;
+  see also: BEGIN BREAK ;THEN END  ff.boot
+
+ELSE` ( -- ) compiles a forward unconditional jump, to be resolved by
+  the right-balancing "THEN" or ";THEN", and resolves the jump offset of
+  the left-balancing "IF"
+  : ELSE` SKIP` swap dupc@ SC c! THEN` ; \ jmp
+SKIP` ( -- ) compiles a forward unconditional jump, to be resolved by the
+  right-balancing "THEN"; this is typically used in definitions jumping
+  into the following definition (instead of jumping back to a named entry)
+  : SKIP` $EB c, here SC c@ c, ; \ jmp
+  see also: ELSE conditionals IF THEN ;THEN  ff.boot
+
+THEN` ( -- ) resolves the jump offset of the left-balancing "IF" or "ELSE"
+  : THEN` dupc@ >SC : `then here over- 1- `?off swap c! ;
+;THEN` ( -- ) executes ";;" to compile a "ret" instruction or convert
+  into a "jmp" the "call" compiled just before (tail-recursion), then
+  resolves the jump offset of the left-balancing "IF" or "ELSE"
+  : ;THEN` ;;` dupc@ SC c! THEN` ;
+  see also: THEN conditionals IF ELSE ;THEN  ff.boot
+
+BEGIN` ( -- ) opens a looping control-structure, marking its entry address
+  : BEGIN` `mrk 2@ align` here SC c@ over+ `mrk 2! ;
+`mrk ( -- @ ) compiler hidden state variable (8 bytes):
+  stores first the looping control-structure top target address (for "AGAIN"
+  "TILL" "REPEAT" and "UNTIL" macros to compute their backward jump offset),
+  which is aligned (i.e. multiple of 4) and stores in its 2 least significant
+  bits its corresponding registers allocation (see "SC") to be restored by
+  the above macros or by "WHILE" or "BREAK" which compile a jump to the loop
+  bottom exit address;
+  stores then the head address of the linked list of forward jumps compiled
+  by "WHILE" and "BREAK" for resolution by "END" or "REPEAT" or "UNTIL".
+  see also: BEGIN flow-control START TIMES  ff.boot
+
+TIMES` ( n -- | == n )   : TIMES` >r` RTIMES` ;
+RTIMES` ( -- | n == ) opens a counted looping control-structure, executed
+  n times with the loop index on top of CALLstack counting down from n-1
+  downto 0 (when n=0, the loop body is executed 0 times, i.e. skipped)
+  : RTIMES` BEGIN` $007808FF , ; \ dec[eax] js.b
+  Note: use "r" to get the loop index, and " r ~ " to convert the index to
+  counting from -n upto -1 (see examples in source file "bed.ff")
+  Implementation note: unlike usual Forth counted loops (for-next or do-loop),
+  RTIMES "decrement and jump if negative" test is compiled at the loop entry,
+  which supports 0-times looping, and is compatible with other looping macros
+  thanks to "rdrop" automatically compiled at end of loop (see END`).
+  see also: TIMES flow-control BEGIN  ff.boot
+
+START` ( -- ) opens a looping control-structure with a forward unconditional
+  jump into the loop, to be resolved by "ENTER"
+  : START` $9090 w, align` $00EB here 2- w! BEGIN` ;
+ENTER` ( -- ) resolves the forward jump compiled by "START" at looping
+  control-structure entry
+  Note: "ENTER" may be used inside "IF ... THEN" (nested) control-structure(s)
+  : ENTER` `mrk@ dup 3& >SC -4& 1- `then ; \ for `then see "THEN"
+  see also: START flow-control  ff.boot
+
+0;` ( 0 -- | ? -- ? ) if TOS is null, pops TOS and returns,
+  otherwise keeps TOS unchanged and continues execution after "0;"
+  typically use this within loops or recursive subroutines, but WARNING:
+  DON'T use this within counted loops (because of the index on CALLstack)!
+  : 0;` 0-` 0=` IF` drop` ;THEN` ;
+  see also: ;THEN  ff.boot
+
+TILL` ( -- ) compiles a backward conditional jump to the entry of the
+  looping control-structure
+  Note: "TILL" may be used inside "IF ... THEN" (nested) control-structure(s)
+  : TILL` `cond  \ fallthru
+  : `-jmp `mrk@ dup 3& >SC -4& `-j ; \ for `-j see in ff.boot
+WHILE` ( -- ) compiles a forward conditional jump out of the looping
+  control structure
+  Note: "WHILE" may be used inside "IF ... THEN" (nested) control-structure(s)
+  : WHILE` `cond  \ fallthru
+  : `+jmp `mrk 2@ 3& >SC swap c, here dup `mrk 4+ ! swap - `?off c, ;
+  see also: TILL conditionals flow-control BEGIN WHILE BREAK  ff.boot
+
+AGAIN` ( -- ) compiles a backward unconditional jump to the entry of
+  the looping control-structure, and resolves the jump offset of the
+  left-balancing "IF" (pattern: "IF ... AGAIN")
+  Note: "AGAIN" may be used inside "IF ... THEN" (nested) control-structure(s)
+  : AGAIN` $EB `-jmp THEN` ;  \ for `-jmp see TILL`
+BREAK` ( -- ) compiles a forward unconditional jump out of the looping
+  control-structure, and resolves the jump offset of the left-balancing "IF"
+  (pattern: "IF ... BREAK")
+  Note: "BREAK" may be used inside "IF ... THEN" (nested) control-structure(s)
+  : BREAK` $EB `+jmp THEN` ; \ for `+jmp see WHILE`
+  see also: AGAIN flow-control BEGIN IF WHILE  ff.boot
+
+END` ( -- ) closes the looping control-structure by resolving the jump
+  offsets of all the conditional "WHILE" and unconditional "BREAK" forward
+  jumps out of the looping control-structure; if a downcounting forward
+  jump compiled by "TIMES" or "RTIMES" at the loop entry is found, it is
+  also resolved, and an "rdrop" is also compiled to cleanup the CALLstack
+  on exit of the counted loop.
+  : END` `mrk 2@ dup 3& >SC -4& swap  \ -- -mrk +mrk
+    START dupc@ over `then - ENTER = UNTIL  \ -- -mrk -mrk ; resolve fwdRefs
+    @ $007808FF- 0= drop IF 3+ here over- 1- swap tuckc! rdrop` THEN
+    drop `mrk 2! ;
+  see also: flow-control BEGIN TIMES  ff.boot
+
+UNTIL` ( -- ) closes the looping control-structure by compiling a backward
+  conditional jump to the loop entry, and calls "END`" to resolve all the
+  forward references within the loop
+  : UNTIL` TILL` END` ;
+REPEAT` ( -- ) closes the looping control-structure by compiling a backward
+  unconditional jump to the loop entry, and calls "END" to resolve all the
+  forward references within the loop
+  : REPEAT` $EB `-jmp END` ; \ jmp  for `-jmp see "TILL"
+  see also: UNTIL flow-control BEGIN TILL AGAIN  ff.boot
+
+  -------------------
+  RETRO/REVA/HELFORTH compatibility control-structures
+
+if`    ( ? -- ) non-null  : if`    $840F if1\ ; \ jz.long
+0=if`  ( ? -- ) null      : 0=if`  $850F if1\ ; \ jnz.long
+0<if`  ( ? -- ) negative  : 0<if`  $890F if1\ ; \ jns.long
+0>=if` ( ? -- ) non-neg   : 0>=if` $880F if1\ ; \ js.long
+  These words pop TOS and compare it to zero, and if condition is true,
+  then continue execution after "if", otherwise jump forward after balancing
+  "else" or "then" or ";then"
+if1\ : if1\ $DB09, s09  drop` w, here SC @ , ; \ or ebx,ebx
+  see also: if =if  ff.ff \ Retro/Reva/HelFORTH compat
+
+=if`   ( x y -- ) equal        : =if`   $850F if2\ ; \ jnz.long
+<>if`  ( x y -- ) non-equal    : <>if`  $840F if2\ ; \ jz.long
+<if`   ( x y -- ) less         : <if`   $8D0F if2\ ; \ jge.long
+<=if`  ( x y -- ) non-greater  : <=if`  $8F0F if2\ ; \ jg.long
+u<if`  ( x y -- ) below        : u<if`  $830F if2\ ; \ jae.long
+u<=if` ( x y -- ) non-above    : u<=if` $870F if2\ ; \ ja.long
+  These words pop x and y and compare x.versus.y (UNSIGNED with u-prefix),
+  and if condition is true, then continue execution after "if", otherwise
+  jump forward after balancing "else" or "then" or ";then"
+if2\ : if2\ $DA39, s09 2drop` w, here SC @ , ; \ cmp edx,ebx
+  see also: =if if  ff.ff \ Retro/Reva/HelFORTH compat
+
+then` ( -- ) resolves the target address of the balancing forward jump
+  (i.e. either "else" or any kind of "if")
+  : then` dup@ >SC here over- 4- swap ! 0 callmark ! ;
+;then` ( -- ) compiles a return-from-subroutine, unless the previous
+  compiled word was a call, which is then changed to a jump (see ";;"),
+  then resolves the target address of the balancing forward jump
+  (i.e. either "else" or any kind of "if")
+  : then;` ;;` dup@ SC ! then` ;
+  see also: then if else  ff.ff \ Retro/Reva/HelFORTH compat
+
+else` ( -- ) jumps forward after balancing "then" or ";then", and also
+  resolves the target address of the balancing forward conditional jump
+  (i.e. any kind of "if")
+  : else` $E9 c, here SC @ , swap then` ; \ jmp.long
+  see also: if else then ;then  ff.ff \ Retro/Reva/HelFORTH compat
+
+again` ( -- ) closes a non-counted loop by compiling an unconditional jump
+  to the address noted by "repeat"; to exit the loop, use any number of
+  ";then" (balanced by any kind of "if"), and/or any number of "0;"
+  : again` >SC 0 SC !
+    here - dup -$7E <if $E9 c, 5- , ;then \ jmp.long
+    $EB c, 2- c, ; \ jmp.b
+  see also: repeat 0; again while  ff.ff \ Retro/Reva/HelFORTH compat
+
+while` ( ? -- ) closes a non-counted loop by compiling a conditional jump
+  (which will pop TOS and jump if null) back to the address noted by
+  "repeat"; you may also exit the loop by using any number of ";then"
+  (balanced by any kind of "if"), and/or any number of "0;"
+  : while` $DB09, s09 drop` >SC \ or ebx,ebx
+    here - dup -$7E <if $850F w, 6- , ;then \ jnz.long
+    $75 c, 2- c, ; \ jnz.b
+  see also: repeat 0; again while  ff.ff \ Retro/Reva/HelFORTH compat
+
+repeat` ( -- ) opens a non-counted loop by noting the current compilation
+  address for later resolution by either "again" or "while"
+  : repeat` here SC @ ;
+  see also: repeat 0; again while  for next  ff.ff \ Retro/Reva/HelFORTH compat
+
+for` ( n -- | == n ) opens a counted loop by compiling a ">r" and noting the
+  following compilation address for later resolution by the balancing "next"
+  : for` >r` repeat` ;
+next` ( -- | n == n-1 | 1 == ) closes a counted loop by compiling code
+  which at runtime will decrement the CALLstack top cell, and if positive
+  will branch back after the ">r" compiled by the balancing "for", and
+  otherwise will pop the CALLstack top item.
+  The loop will then be executed at least once, n times if n>0, from n
+  downto 1; to push on the DATAstack a copy of the loop index, use "r"
+  : next` >SC here - dup -$7C <if $8F0F08FF , 8- , rdrop` ;then \ dec[eax] jg.l
+    $FC7F08FF , here 1- +! rdrop` ; \ dec[eax] jg.b
+  see also: for r next  ff.ff \ Retro/Reva/HelFORTH compatibility
+
+  -----------------------
+  CONDITIONAL COMPILATION control-structures
+
+[THEN]` ( -- ) conditional compilation: do nothing;
+  this is just a source marker for "[IF]" or "[ELSE]"
+  : [THEN]` ;
+[ELSE]` ( -- ) conditional compilation: skips the following source
+  until the balancing next "[THEN]"
+  : `[] '[' parse 2drop wsparse  \ -- @ # ; parse next word with "[" initial
+    0- 0= drop IF drop >in! !"unbalanced" ;THEN  \ -- @ ; #=0:sourceEnd
+    1 >in -! dup "ELSE]" $- drop IF dup "THEN]" $- drop IF "IF]" $- drop `[] ?
+    BEGIN `[] UNTIL `[] ;THEN 1+ THEN drop ;
+  : [ELSE]` >in@ `[] drop ;
+[IF]` ( ? -- ) conditional compilation: pops TOS and if null skips the
+  following source until the next balancing "[ELSE]" or "[THEN]"
+  : [IF]` 0- 0= drop IF [ELSE]` THEN ;
+  see also: [THEN] [~] [0] [1] [IF] [ELSE] [os]  ff.boot
+
+[0]` ( -- 0 ) immediate constant zero, for use with [IF]
+  0 constant [0]`
+[1]` ( -- 1 ) immediate constant one, for use with [IF]
+  1 constant [1]`
+[~]` ( <name> -- ? ) calls "wsparse" to get the next word from input source
+  and returns a null (or non-null) flag if the word is found (or not)
+  in the compiler symbol table.
+  : [~]` wsparse find nip ;
+  see also: [0] [1] [~] [IF] [ELSE] [THEN] [os]  ff.boot
+
+[os]` ( -- ? ) macro-constant, returns 1 for Linux, 0 for Windows
+  tipically used before [IF] to compile OS-specific code
+  1 constant [os]`  \ Linux
+  0 constant [os]`  \ Windows
+  see also: libc k32 boot  fflin.boot/ffwin.boot
+
+  --------------------------
+  OPERATING-SYSTEM INTERFACE
+
+syscall ( ... #args syscall# -- ior ) requests Linux to execute
+  the system-call number "syscall#", using "#args" number of arguments
+  popped from DATAstack (if greater than 6, throws the exception error
+  message "syscall#args>6"); returns the result "ior",
+  which is negative if an error occured
+  see /usr/include/asm/unistd.h for syscall#, see man for arglist
+  see also: openr openw read write close  fflinio.asm
+
+stdin  ( -- n ) constant: returns the console input file-descriptor/handle
+stdout ( -- n ) constant: returns the console output file-descriptor/handle
+  Lin: the console file-descriptors are the constants stdin=0 stdout=1
+  Win: these constants are initialized at startup (with GetStdHandle)
+  see also: stdin accept type  fflinio.asm/ffwinio.asm
+
+open' ( -- @ ) 64-bytes variable: holds a counted string, initialized at boot
+  with the path to the FreeForth install/root-directory:
+  Linux: $HOME/ff/ (maybe a symbolic-link)
+  Windows: $FFROOT$ (must end with a "\") or C:\ff\ by default
+  openr and openw use it to substitute a filename-initial single-quote "'"
+  by appending the filename-without-initial to open' string and then using
+  open'+1 as null-terminated string for the operating-system open-call
+  (for example "'ff.ff" is expanded to "$HOME/ff/ff.ff" or "C:\\ff\\ff.ff")
+  see also: openr openw  fflinio.asm/ffwinio.asm
+
+openr ( @ # -- fd ) requests the operating system to open the _existing_ file,
+  which pathname starts at address "@" for "#" bytes, for read-only access;
+  if the first byte at "@" is a "'", it is substituted with "open'" string;
+  if the file doesn't exist, openr fails;
+  "fd" is the returned "file-descriptor"(Linux) or "file-handle"(Windows),
+  to be used by "read" "close", which is negative if "openr" failed to find
+  or open the file.
+  Lin: openr zt &644 0 rot 3 5 syscall ;
+  Win: see ffwinio.asm
+  see also: open' openw openw0 read write close syscall  fflinio.asm/ffwinio.asm
+
+openw ( @ # -- fd ) requests the operating system to open the file, which
+  pathname starts at address "@" for "#" bytes, for read-write access;
+  if the first byte at "@" is a "'", it is substituted with "open'" string;
+  if the file exists, it keeps its length, otherwise openw creates it;
+  "fd" is the returned "file-descriptor"(Linux) or "file-handle"(Windows),
+  to be used by "read" "write" "close", which is negative if "openw" failed
+  to open or create the file.
+  Lin: openw zt &644 $42 rot 3 5 syscall ;
+  Win: see ffwinio.asm
+  see also: open' openr openw0 read write close syscall  fflinio.asm/ffwinio.asm
+
+openw0 ( @ # -- fd ) requests the operating system to open the file, which
+  pathname starts at address "@" for "#" bytes, for read-write access;
+  if the first byte at "@" is a "'", it is substituted with "open'" string;
+  if the file exists, it is truncated to length 0, otherwise it is created;
+  "fd" is the returned "file-descriptor"(Linux) or "file-handle"(Windows),
+  to be used by "read" "write" "close", which is negative if "openw" failed
+  to open or create the file.
+  Lin: openw zt &644 $42 rot 3 5 syscall ;
+  Win: see ffwinio.asm
+  see also: open' openr openw read write close syscall  fflinio.asm/ffwinio.asm
+
+close ( fd -- ? ) requests the operating system to close the file-descriptor
+  "fd"; returns null if success, or a negative value if "close" failed
+  Lin: close 1 6 syscall ;
+  Win: see ffwinio.asm
+  see also: openr openw read write syscall  fflinio.asm/ffwinio.asm
+
+read ( @ # fd -- n ) requests the operating system to read the next
+  "#" bytes from the file specified by the file-descriptor "fd", and
+  to write them into memory starting from address "@" (see man 2 read);
+  returns "n" negative if an error occured, otherwise returns the number
+  of bytes effectively transfered, which may be less than "#" in case
+  the end-of-file was reached
+  Lin: read 3 3 syscall ;
+  Win: see ffwinio.asm
+  see also: openr openw write close syscall  fflinio.asm/ffwinio.asm
+
+write ( @ # fd -- n ) request the operating system to write into (i.e.
+  append at the end of) the file specified by the file-descriptor "fd",
+  "#" bytes read from memory starting from address "@" (see man 2 write);
+  returns "n" negative if an error occured, otherwise returns the number
+  of bytes effectively written to the file, usually equal to "#" (unless
+  the file system partition is full).
+  Lin: write 3 4 syscall ;
+  Win: see ffwinio.asm
+  see also: openr openw read close syscall  fflinio.asm/ffwinio.asm
+
+lseek ( wh off fd -- off ) request the operating system to seek through the
+  file specified by the file-descriptor "fd", for "off" bytes relatively to
+  either the start-of-file if wh=0(SET), or its current position if wh=1(CUR),
+  or the end-of-file if wh=2(END); returns the resulting offset relatively to
+  the start of file, or -1 to indicate an error.
+  Lin: lseek 3 19 syscall ;
+  Win: 0 -rot 4 k32. SetFilePointer ; \ see win32.hlp
+  see also: openr openw read write "man lseek"  ff.ff
+
+ioctl ( arg request fd -- ? ) manipulates the underlying device parameters of
+  special files; returns null if success, or a negative value if "ioctl" failed
+  Lin: ioctl 3 54 syscall ;
+  Win: (not implemented)
+  see also: openr openw "man ioctl"  ff.ff
+
+select ( timeval exceptfds writefds readfds nfds -- ? ) monitor multiple file
+  descriptors, until one or more become ready for some class of I/O operation;
+  returns null if success, or a negative value if "select" failed
+  Lin: select 5 142 syscall ;
+  Win: (not implemented)
+  see also: openr openw "man select"  ff.ff
+
+malloc ( # -- @ ) allocates from system heap "#" bytes and returns a pointer
+  to the allocated memory, or NULL if error
+  Lin: 1 libc. malloc ;
+  Win: 0 2 k32. LocalAlloc ; \ 2ndArg:LMEM_FIXED  see win32.hlp
+  see also: free "man malloc"  ff.ff
+
+free ( @ -- ) no-op if "@" is NULL, otherwise frees the memory space pointed to
+  by "@", which must have been returned by a previous call to malloc
+  Lin: 1 libc. free drop ;
+  Win: 1 k32. LocalFree drop ; \ see win32.hlp
+  see also: malloc "man malloc"  ff.ff
+
+type ( @ # -- ) requests the operating system to write into the
+  standard-output file-descriptor (stdout) "#" bytes starting
+  from memory address "@"
+  :^ type stdout write drop ;
+accept ( @ # -- n ) requests the operating system to read from the
+  standard-input file-descriptor (stdin) at most "#" bytes and to store them
+  starting from memory address "@"; returns the number of bytes effectively
+  read (i.e. usually up to the first end-of-line),
+  which is null when the standard-input is closed
+  :^ accept stdin read ;
+  see also: type key emit syscall  Lin:fflinio.asm Win:ffwinio.asm
+
+emit ( c -- ) requests the operating system to write one byte into the
+  standard-output file-descriptor (stdout)
+  Note: in a literal string, you may easily encode any byte by using
+  special characters interpreted by the literalcompiler (see stringcodes)
+  : emit `io 2dupc! swap 1_ type ;  \ variable `io
+space ( -- ) prints a space
+  Note: in a literal string, you must substitute every space with a "_"
+  to allow "wsparse" to parse the string all at once
+  : space 32 emit ;
+cr ( -- ) prints a newline
+  Note: in any literal string, you may easily embed a LF using "^J"
+  : cr ."^J" ;
+  see also: emit type wsparse stringcompiler stringcodes  ff.boot
+
+key ( -- c ) requests the operating system to read one byte from the
+  standard-input file-descriptor (stdin); returns the read byte
+  Note: current FreeForth user input is line-oriented, therefore the
+  user must enter a full line and hit Enter before "key" may return
+  : key `io 1 under accept drop c@ ;  \ variable `io
+  see also: accept  ff.boot
+
+  ----------------
+  INTEGERS DISPLAY
+
+. ( n -- ) displays n using the conversion base stored in "base",
+  using the minimum number of digits, and followed by a space
+  : . .\ space ;
+.\ ( n -- ) displays n using the conversion base stored in "base",
+  using the minimum number of digits
+  : `.d base@ /% 0; `.d .digit ;  \ recursive decomposition and display
+  : .\ 0- 0< IF ."-" negate THEN `.d .digit ;
+.digit ( c -- ) displays the digit c using the characters 0..9 for
+  the digit values 0..9, or A..Z for the digit values 10..35, or ?
+  for the digit values above 35.
+  : .digit '0'+ '9' u> drop IF 7+ 'Z' u> drop IF '?'_ THEN THEN emit ;
+base ( -- @ ) system variable: output conversion base for "." and ".\"
+  variable base  10 base!  \ initially decimal
+  see also: . .l .dec  ff.boot
+
+.l ( u -- ) displays the unsigned long u using 8 hexadecimal digits
+  : .l 8 .#s ;
+.w ( w -- ) displays the unsigned word w using 4 hexadecimal digits
+  : .w 4 .#s ;
+.b ( c -- ) displays the unsigned byte "c" using 2 hexadecimal digits
+  : .b 2 .#s ;
+.#s ( u c -- ) displays the unsigned number "u" using "c" hexadecimal digits
+  : .#s TIMES dup r 4* >> $F& .digit REPEAT drop ;
+  see also: .l .w .b .  ff.boot
+
+.dec ( n -- ) display n in decimal, whatever the current value of "base"
+  : .dec base@ 10 base! swap . base! ;
+.dec\ ( n -- ) same as .dec but uses .\ instead of .
+  : .dec\ base@ 10 base! swap .\ base! ;
+  see also: . .dec .l .#s  ff.ff
+
+  -----------
+  MEMORY DUMP
+
+dump ( @ # -- ) displays an hexadecimal memory dump of # bytes
+  starting at address "@", by lines of 16 bytes, with an extra
+  space before every byte at an address multiple of 4
+  : dump bounds 2dump cr ;
+2dump ( @lim @ -- ) displays an hexadecimal memory dump starting at
+  address "@" until (but not including) address "@lim", by lines of 16 bytes,
+  with an extra space before every byte at an address multiple of 4
+  : 2dump dup .l .":" dup 16+ -rot  \ -- @+16 @lim @
+    START >rswapr> = IF nip cr 2dump ;THEN >rswapr>  \ check for newline
+      dup 3& 0= drop IF space THEN space c@+ .b  \ display one byte
+    ENTER u<= UNTIL 2drop drop space ;
+  see also: dump ;dump .h .s  ff.boot
+
+;dump` ( @ -- ) calls ";`" to close and execute any pending anonymous
+  definition (which typically pushes the address "@" onto the DATAstack),
+  then starting from the address in TOS, calls "2dump" to dump the next
+  16 bytes and waits for user input; if the user input is empty (simply
+  hit the Enter key), proceed with the 16 next bytes; otherwise (hit a
+  space before Enter) returns
+  : ;dump` ;` BEGIN 16 bounds under 2dump stopdump? UNTIL drop ;
+stopdump? ( -- ; nz? ) check wether we are at end of user input:
+  Linux receives LF at each end-of-line, whereas Windows receives CR+LF
+  : stopdump? [os] [IF] key 10- [ELSE] key 13- key 10- | [THEN] drop ;
+  see also: ;dump dump .h .s  ff.ff
+
+ui ( -- ) user redirectable vector, by default displays the FreeForth prompt
+  :^ ui prompt ;  \ ff.boot
+prompt ( -- ) displays the FreeForth prompt, composed of the "depth", either
+  a ";" or a ":" if compiling an anonymous or a named definition, and a space
+  : prompt space depth .\ ';' anon@ 0- 0= drop IF 1- THEN emit space ;
+  see also: ui .s  ff.boot
+
+.s` ( -- ) dumps the DATAstack: displays the FreeForth "prompt", followed
+  by 8 DATAstack cells, the DATAstack top being displayed last (rightmost),
+  and with an extra space between the two DATAstack cells above and under
+  the DATAstack base address.
+  : `.s  1- 0; swap >r `.s depth 0= drop IF space THEN r . r> ;
+  : .s` prompt 9 `.s cr ;
+  see also: . .h  ff.boot
+
+.h` ( -- ) dumps the compilation buffer and the DATAstack:
+  first displays the number of kilobytes free remaining in the code&data
+  heap (between the compilation pointer and the symbol table allocation
+  pointer "H"), followed by a dump of the DATAstack;
+  starting from the address in "anon" if non-null, or from the address
+  pointed by the last compiled header, dumps memory until the address
+  in the compilation pointer (i386 register ebp)
+  : .h` ."free:" H@ here - 1024/ .\ ."k_" .s`
+    anon@ 0- 0= IF drop H@ @ THEN  here over- dump ;
+  see also: dump .s  ff.boot
+
+words` ( -- ) displays the symbol table headers, last defined first displayed
+  : words` H@ START 2dup+ 1+ -rot type space  \ display one header string
+              ENTER 5+ c@+ 0- 0= UNTIL 2drop cr ;  \ check for end marker
+  see also: H header find  ff.boot
+
+  --------------
+  HIDING HEADERS
+
+hid'm` ( -- ) removes from the compiler symbol table all the headers with
+  a name-string beginning with a "`" backquote; the memory space of the
+  removed headers is recovered by packing up all the other headers, thus
+  freeing heap space, and also speeding up future symbol table searches.
+  source code in ff.boot:
+  : hid'm` H @ 0 over 2- c! dup 1- swap  \ first push all backquotes addresses
+    START over+ 1+ swap dupc@ '`'- drop swap IF nip THEN
+    ENTER 5+ c@+ 0- 0= UNTIL 2drop       \ then pop addresses and pack headers
+    dup 1- c@+ + 1+ >r  START over 1- c@+ + 1+ swap 6-
+      START 1- dupc@ r> 1- dup>r c! ENTER = UNTIL 2drop
+    ENTER H @ 1- = drop UNTIL drop r> H ! ;  \ nice algorithm, isn't it?
+  see also: loc: mark header  ff.boot
+
+mark` ( <name> -- ) creates a self-forgetting mark
+  : mark` ;` wsparse marker ;
+marker ( @ # -- ) creates a self-forgetting mark as a macro (i.e. with
+  a header name composed of the string starting at "@" and "#" characters
+  long, plus an appended backquote) which, when executed, restores the
+  compilation pointer and the symbol table allocation pointer "H" in their
+  state just before the mark was created
+  : `mark ;` r> 5- here - allot anon:`  \ restore compilation pointer
+    H@ BEGIN dup@ swap 5+ c@+ + 1+ swap here = 2drop UNTIL H! ;  \ restore H
+  : marker 2dup+ dupc@ >r dup>r '`' swap c! 1+  \ -- @ #+1 ; append backquote
+    here 0 header 2r> c!  \ -- ; create CODE header, restore overwritten char
+    `mark ' call, anon:` ;
+  see also: mark marker needs hid'm loc:  ff.boot
+
+loc:` ( -- ) appends to the symbol table a ";loc`" macro header, which,
+  when later executed, will restore the symbol table allocation pointer
+  "H" in its state just before creating the ";loc`" macro. Nestable.
+  This may be used instead of "hid'm" to remove several temporary ("local")
+  headers at once; however, some of the definitions should be aliased to
+  new headers after removing the local ones, typically as follows:
+    loc:  : tmp1 ;  : tmp2 ;  : tmp3 tmp1 tmp2 ;  tmp3 ' ;loc alias new3
+  this will alias new3 to tmp3 and remove tmp1,tmp2,tmp3 from symbol table
+  : `;loc which@ 5+ c@+ + 1+ H! ;  \ -- ; restore H after last found header
+  : loc:` ";loc`" `;loc ' 0 header ;
+  see also: ' alias hid'm  ff.ff \ Retro/Reva/HelFORTH compat
+
+  ---------------
+  INCLUDING FILES
+
+needs` ( <filename> -- ) this is a commodity to avoid typing: "file" needed
+  This is also used to make a source file auto-executable by Linux shell,
+  by inserting a first line with "#!ff needs" (see example in file hello).
+  : needs` ;` wsparse needed ;
+needed ( @ # -- ) compiles a file unless already compiled:
+  finds the filename string at "@" address for "#" characters;
+  looks in the compiler symbol table for a header with a name matching
+  the filename with an appended backquote, marking that the file was
+  already compiled, so if found simply returns;
+  otherwise opens the file (or throws an exception if it can't be open),
+  creates a self-forgetting mark (see "marker") with the filename,
+  loads the file's full contents in memory at the address in "tp",
+  and closes the file; then skips the first source line if it begins
+  with the shell "#!" mark, and finally calls "eval" on the file's
+  remaining contents.
+  see also: needs openr marker read close mark eval tp  ff.boot
+
+eval ( @ # -- ) compiles a source from base address "@" for "#" characters
+  : eval >in@ tp@ 2>r  over+ tp! >in!  compiler  2r> tp! >in! ;
+  see also: >in tp compiler  ff.boot
+
+boot At startup, the FreeForth executable first compiles its binary-embedded
+  source code, assembled by fasm from the contents of the file "ff.boot"
+  concatenated with either "fflin.boot" for Linux or "ffwin.boot" for Windows,
+  then if it finds the file "ff.ff" it also compiles it (put here what you want
+  always available at startup), then it compiles its command line (see "args"),
+  then it displays its welcome banner and finally enters its main loop,
+  which reads lines from the standard input, and compiles them in turn,
+  immediately executing macros and anonymous definitions finished by ";",
+  until "bye" is executed.
+  see also: ff.boot ff.ff ff.help bed.ff hello
+
+bye` ( -- ) requests the operating system to terminate the FreeForth session
+  with a null return value
+  : bye` ;` cr 0 exit ;
+exit ( n -- ) requests the operating system to terminate the FreeForth session
+  with a return code "n"
+  Lin: exit 1 1 syscall ;
+  Win: exit 1 k32. ExitProcess ;
+  see also: bye  ff.boot fflinio.asm/ffwinio.asm
+
+  ---------------------------
+  DYNAMIC LIBRARIES INTERFACE
+
+#lib ( @ # -- libh ) loads the dynamic-link-library with filename starting at
+  address "@" for "#" bytes, and returns its handle, for later use by "#fun".
+  If the library is not found, an exception is thrown with error message.
+#fun ( @ # libh -- funEntry ) looks in the library with handle "libh"
+  for the function matching the name starting at address "@" for "#" bytes,
+  and if found returns its entry, for use with "#call" or "fun:", otherwise
+  throws an exception with error message.
+#call ( argN ... arg1 N funEntry -- funResult ) calls the library function
+  with entry at "funEntry", which consumes "N" arguments from DATAstack and
+  returns a single result on top of DATAstack. The N arguments must be pushed
+  on DATAstack in the same order as in C, i.e. C-prototype (see Linux man or
+  Windows win32.hlp) rightmost argument first, leftmost last.
+  see also: #lib lib: #fun fun: libc. k32.  Lin:fflinio.asm Win:ffwinio.asm
+
+lib:` ( @ # <name> -- ; a n -- funEntry ) loads the dynamic-link-library
+  with filename starting at address "@" for "#" bytes, and defines a word
+  which will lookup in this library for the function matching the name
+  starting at address "a" for "n" bytes, and if found will return its entry,
+  for use with "#call" or "fun:".
+  If the library is not found, or if later a function is not found,
+  an exception is thrown with corresponding error message.
+  : lib:` :` #lib lit` #fun ' call, ;` ;
+  see also: lib: #call fun: libc k32  ff.boot
+
+fun:` ( funEntry N <name> -- ; argN..arg1 -- result ) defines a word
+  which will call the library function with entry at "funEntry",
+  which will consume "N" arguments from DATAstack and return a single
+  result on top of DATAstack. The N arguments must be pushed on DATAstack
+  in the same order as in C, i.e. C-prototype (see Linux man or win32.hlp)
+  rightmost argument first, leftmost last.
+  : fun:` :` lit` lit` #call ' call, ;` ;
+  Example: "GetTickCount" k32 0 fun: ms@  \ -- currentMillisecondsCount (ff.ff)
+  see also: lib: fun: libc k32  ff.boot
+
+libc.` ( N <name> -- ; argN ... arg1 -- result ) compiles inline a harness
+  calling the libc function named "name" taking "N" arguments, which must
+  be pushed on DATAstack in the same order as in C, i.e. C-prototype (see man)
+  rightmost argument first, leftmost last; the N arguments are consumed
+  by the function, which returns a single result on top of DATAstack.
+  Lin: libc.` wsparse libc lit` #call ' call, ;  \ Win: see ker32.
+libc ( @ # -- funEntry ) looks up in libc.so.6 for the function matching
+  the name starting at address "@" for "#" bytes, and if found returns its
+  entry, otherwise throws an exception (example: "putc" libc 1 fun: putc)
+  "libc.so.6" lib: libc  \ Linux only, Windows see k32
+man` ( <toEOL> -- ) parses to end-of-line and passes it to the shell command
+  "man", the Linux online manual which documents all system and libc functions
+  (beginners, start with: man man)
+  : man` >in@ 4- lnparse + over- shell ; \ 4-:"man_"
+  see also: libc. lib: fun: ?ior man  fflin.boot
+
+k32.` ( N <name> -- ; argN ... arg1 -- result ) compiles inline a harness
+  calling the kernel32 function named "name" taking "N" arguments, which must
+  be pushed on DATAstack in the same order as in C, i.e. C-prototype (see
+  win32.hlp) rightmost argument first, lefmost last; the N arguments are
+  consumed by the function, which returns a single result on top of DATAstack.
+  Note that some functions must be passed with an appended "A" to their name
+  (examples in ff.ff), see fasm/INCLUDE/APIA/KERNEL32.INC for these names.
+  : k32.` wsparse k32 lit` #call ' call, ;  \ Windows only, Linux see libc.
+k32 ( @ # -- funEntry ) looks up in kernel32.dll for the function matching
+  the name starting at address "@" for "#" bytes, and if found returns its
+  entry, otherwise throws an exception (example: "putc" k32 1 fun: putc)
+  "kernel32.dll" lib: k32  \ Windows only, Linux see libc
+win32.hlp` ( -- ) spawns winhlp32.exe on the "Win32 SDK Reference Help" which
+  documents all(?) kernel32.dll functions; you can find win32.hlp for example
+  on LCC's website <http://www.cs.virginia.edu/~lcc-win32> thanks Jacob Navia
+  : win32.hlp` "winhlp32.exe_win32.hlp" shell ;
+  see also: k32. lib: fun: ?ior fasm  ffwin.boot
+
+ior ( -- @ ) variable used by "?ior"
+?ior ( n -- ) stores n in the variable "ior", and if n<0 displays the
+  corresponding system error message.
+  + under Linux, "n" is expected to be a result code returned by the last
+    system call, which is null when no error, or a negative error code from
+    which "?ior" displays the corresponding system error string.
+  + under Windows, when n<0 "?ior" calls GetLastError and stores its return
+    value into "ior", then calls FormatMessage to display the error message;
+    "?ior" use depends on Windows system call return type:
+    if it's BOOL (0=false=error, 1=true=ok), use "1- ?ior" (-1=error, 0=ok);
+    otherwise, the returned value is often negative when an error occured
+    (HFILE_ERROR = INVALID_HANDLE_VALUE = INVALID_FILE_SIZE = -1 for examples),
+    then use "?ior" directly (preceded by "dup" or later followed by "ior@").
+  see also: ior shell cd libc k32  Lin:ff.ff Win:ffwinio.asm
+
+zt ( @ # -- @ ) append a NUL byte to string starting at address "@"
+  for "#" bytes, making it a Zero-Terminated string.
+  Note: as literal strings are already zero-terminated (although the NUL
+  final is not counted into the initial byte count), zt won't change them
+  Note: as wsparse considers the NUL character as whitespace, NUL may replace
+  any other whitespace (HT,LF,VT,FF,CR,space) without breaking source code.
+  : zt over+ 0 swap c! ;
+  see also: libc  ff.ff
+
+cd` ( <newdir> -- ) changes the current directory to the next parsed word
+  Lin: cd` wsparse zt 1 12 syscall ?ior ;
+  Win: cd` wsparse zt 1 k32. SetCurrentDirectoryA 1- ?ior ;
+shell ( @ # -- ) passes the string at address "@" for "#" bytes to the shell
+  this allows to pass any command line to the command shell
+  Lin: shell zt 1 libc. system ?ior ;  \ Win: see ff.ff
+!!` ( <line> -- ) passes the rest of the current line to "shell"
+  this is very convenient to pass command lines to the shell
+  : !!` lnparse zt shell ;
+  see also: cd !! shell ?ior zt  ff.ff
+
+  ---------
+  UTILITIES
+
+cls` ( -- ) clears the console window contents and resets its cursor to home:
+home ( -- ) resets the console window cursor into its top-left corner
+atxy ( xCol yRow -- ) moves the console window cursor at row "yRow" and
+  column "xCol", relative to the window frame-buffer top-left corner at
+  character coordinates (0,0)
+  see also: cls home foreground background normal  ff.ff
+
+normal ( -- ) resets the console window color attribute fore/back = black/white
+background ( color -- ) changes the console window background color attribute
+foreground ( color -- ) changes the console window foreground color attribute
+  "color" may be "black" "red" "green" "yellow" "blue" "magenta" "cyan" "white"
+  Linux and Windows define some other specific attributes (see ff.ff)
+  see also: normal background cls  ff.ff
+
+.d ( u -- ) displays n as Gregorian date since 0-0-0
+.wd ( u -- ) displays weekday of nth days since 0-0-0 in Gregorian calendar
+.dt ( u -- ) displays u seconds as date&time (yyyy-mm-dd_hh:mm:ss)
+.t ( u -- ) displays u seconds as time (hh:mm:ss)
+.now` ( -- ) displays the current date and time (see also: .wd .dt .t in ff.ff)
+now ( -- u ) returns the number of seconds since 2000-3-1_0:0:0
+ms ( u -- ) waits inactively during at least "n" milliseconds
+ms@ ( -- u ) returns the system current milliseconds count
+  see also: .now now ms  ff.ff
+
+}}}` ( -- ) marks the end of a code section to be timed
+{{{` ( -- ) marks the beginning of a code section, marked at end with "}}}",
+  which execution duration will be measured repeatedly 16 times, with the
+  help of the i386 "time-stamp-counter" (which counts processor cycles).
+  The measurement overhead may be measured alone with "{{{  }}}" and then
+  subtracted from other measurements.
+  Example:  {{{ ."hello" }}}  \ measures processor cycles to display "hello"
+  see also: }}} ms@ now  ff.ff
+
+  --------------
+  FLOATING-POINT
+
+floats
+FPU  means Floating-Point Unit (use finit to initialize it)
+FPstack  FreeForth uses a separate stack for floats, the 386-associated FPU
+  hardware LIFO stack, composed of eight 80-bits cells: 10 bytes LSByte1st,
+  64-bits significand, 15-bits biaised exponent, MSBit sign -- see also f.s
+  FPstack top cell is called ST0, the cell under it ST1, then ST2 upto ST7.
+  Although almost all FPstack words operate separately from DATAstack words,
+  floats are represented in DATAstack diagrams for simplicity, prefixed by f:
+  example: f! ( f:x @ -- ) the usual relative stack-diagram order of "f:x"
+  and "@" doesn't matter in fact, "f!" pops once both FPstack and DATAstack.
+  see also: DATAstack CALLstack  ff.ff
+
+fcell ( -- 10 ) constant: byte-size of a float
+  Typically used with arithmetic suffix: fcell+ fcell- fcell* fcell/
+  see also: f, literalcompiler  ff.ff
+
+fsw@ ( -- w ) returns FPU status word
+  \ 8D40FC(lea eax-=4)DD38(fnstsw[eax])871087DA(xchg edx,[eax] xchg ebx,edx)
+  : fsw@ ,"^M~@|~]~8^G~^P^G~Z~" ; \ don't care MSword: use .w
+fcw@ ( -- w ) returns FPU control word
+  \ 8D40FC(lea eax-=4)D938(fnstcw[eax])871087DA(xchg edx,[eax] xchg ebx,edx)
+  : fcw@ ,"^M~@|~Y~8^G~^P^G~Z~" ; \ don't care MSword: use .w
+fcw! ( w -- ) sets FPU control word
+  \ 87DA8710(xchg ebx,edx xchg edx,[eax])D928(fldcw[eax])8D4004(lea eax+=4)
+  : fcw! ,"^G~Z~^G~^PY~(^M~@^D" ;
+floor ( f:i.f -- f:i.0 ) returns integer part (rounding towards -infinity)
+  \ C740FC.7F07'7F03(mov[eax-4],$037F'077F) roundTOnearest'roundTO-infinity
+  \ D968FC(fldcw[eax-4])D9FC(frndint)D968FE(fldcw[eax-2])
+  : floor ,"G~@|~^?^G^?^CY~h|~Y~|~Y~h\~~" ; \ f:i.f -- f:i.0 ; integer part
+  see also: fsw@ fcw@ fcw!  ff.ff
+
+f>df ( f:df -- df ) converts float to C-double (64-bits float on DATAstack)
+  \ 8D40F8(eax-=8)DD18(fstp qw[eax])8718875004(xchg ebx,[eax] xch edx,[eax-4])
+  : f>df ,"^M~@x~]~^X^G~^X^G~P^D" ;
+df>f ( df -- f:df ) converts C-double (64-bits float on DATAstack) to float
+  \ 8718875004(xchg ebx,[eax] xchg edx,[eax-4])DD00(fld qw[eax])8D4008(eax+=8)
+  : df>f ,"^G~^X^G~P^D]~^@^M~@^H" ; \ for use with dynamic libraries functions
+f>s ( f:n -- n ) converts float to 32-bits integer (rounding towards nearest)
+  \ 8D40FC(lea eax-=4)DB18(fistp dw[eax])871087DA(xchg edx,[eax] xchg ebx,edx)
+  : f>s ,"^M~@|~[~^X^G~^P^G~Z~" ;
+s>f ( n -- f:n ) converts 32-bits integer to float
+  \ 87DA8710(xchg ebx,edx xchg edx,[eax])DB00(fild dw[eax])8D4004(lea eax+=4)
+  : s>f ,"^G~Z~^G~^P[~^@^M~@^D" ;
+  see also: f>df df>f f>s  ff.ff
+
+`f:` ( FPUinstr <name> -- ) defines words with header-type=2 (see classes),
+  which will inline one or two 16-bits FPU instruction opcodes
+  : `f, dup lit` $FFFF0000& drop IF ,` ;THEN w,` ; \ postpone-handler
+  : `f; dup      $FFFF0000& drop IF ,  ;THEN w,  ; \ immediate-handler
+  : `f:` ;` wsparse rot 2 header ;  `f, ' `f; ' classes &20+ 2! ;
+
+finit` ( -- ) initializes the FPU (ControlWord=$037F StatusWord=$0000)
+  $E3DB `f: finit` \ fninit
+
+fpi` ( -- f:pi ) pushes pi=3.14159.. on FPstack  $EBD9 `f: fpi` \ fldpi
+1.`  ( -- f:1 ) pushes a unity float on FPstack  $E8D9 `f: 1.`  \ fld1
+0.`  ( -- f:0 ) pushes a null float on FPstack   $EED9 `f: 0.`  \ fldz
+  see also: fpi 1.  ff.ff
+
+fdup`  ( f:x -- f:x f:x )              $C0D9 `f: fdup`  \ fld st0
+fover` ( f:y f:x -- f:y f:x f:y )      $C1D9 `f: fover` \ fld st1
+fdrop` ( f:x -- )                      $D8DD `f: fdrop` \ fstp st0
+fnip`  ( f:y f:x -- f:x )              $D9DD `f: fnip`  \ fstp st1
+fswap` ( f:y f:x -- f:x f:y )          $C9D9 `f: fswap` \ fxch st1
+  see also: fdup fover fdrop fnip fswap frot f2dup  ff.ff
+
+f2drop` ( f:y f:x -- )                 $D8DDD8DD `f: f2drop` \ fdrop` fdrop`
+f2dup`  ( f:y f:x -- f:y f:x f:y f:x ) $C1D9C1D9 `f: f2dup`  \ fover` fover`
+ftuck`  ( f:y f:x -- f:x f:y f:x)      $C1D9C9D9 `f: ftuck`  \ fswap` fover`
+funder` ( f:y f:x -- f:y f:y f:x )     $C9D9C1D9 `f: funder` \ fover` fswap`
+frot`   ( f:z f:y f:x -- f:y f:x f:z ) $CAD9C9D9 `f: frot`   \ fswap`  fxch st2
+f-rot`  ( f:z f:y f:x -- f:x f:z f:y ) $C9D9CAD9 `f: f-rot`  \ fxch st2  fswap`
+  see also: f2drop f2dup ftuck funder frot f-rot fdup  ff.ff
+
+fmax` ( f:y f:x -- f:max(x,y) ) maximum of two floats
+  $C1DAF1DB `f: `fmax` \ fcomi  fcmovb st1
+  : fmax` `fmax` fnip` ;
+fmin` ( f:y f:x -- f:min(x,y) ) minimum of two floats
+  $D1DBF1DB `f: `fmin` \ fcomi  fcmovnbe st1
+  : fmin` `fmin` fnip` ;
+fabs` ( f:x -- f:|x| ) absolute value      $E1D9 `f: fabs` \ fabs
+fnegate` ( f:x -- f:-x ) opposite value    $E0D9 `f: fnegate` \ fchs
+  see also: fmax fmin fabs fnegate f+  ff.ff
+
+f+`     ( f:y f:x -- f:x+y )           $C1DE `f: f+`     \ faddp
+fover+` ( f:y f:x -- f:y f:x+y )       $C1D8 `f: fover+` \ fadd st0,st1
+f-`     ( f:y f:x -- f:y-x )           $E9DE `f: f-`     \ fsubp
+fover-` ( f:y f:x -- f:y f:x-y )       $E1D8 `f: fover-` \ fsub st0,st1
+fswap-` ( f:y f:x -- f:x-y )           $E1DE `f: fswap-` \ fsubrp
+  see also: f+ fover+ f- fover- fswap- fabs f*  ff.ff
+
+f*`     ( f:y f:x -- f:x*y )           $C9DE `f: f*`     \ fmulp
+fover*` ( f:y f:x -- f:y f:x*y )       $C9D8 `f: fover*` \ fmul st0,st1
+f/`     ( f:y f:x -- f:y/x )           $F9DE `f: f/`     \ fdivp
+fover/` ( f:y f:x -- f:y f:x/y )       $F1D8 `f: fover/` \ fdiv st0,st1
+fswap/` ( f:y f:x -- f:x/y )           $F1DE `f: fswap/` \ fdivrp
+f1/`    ( f:x -- f:1/x ) inverse       : f1/` 1.` fswap/` ;
+  see also: f* fover* f/ fover/ fswap/ f+  ff.ff
+
+`fscale` ( f:e f:m -- f:m*2^trunc(e) ) add e to m exponent (inverse of fxtract)
+  $D9DDFDD9 `f: `fscale` \ fscale fnip`
+`fxtract` ( f:x -- f:e=floor(lb(x)) f:x/2^e ) extract exponent and mantissa
+  $F4D9 `f: `fxtract` \ fxtract
+f2/ ( f:x -- f:x/2 )  : f2/ 1. fnegate fswap `fscale ;
+f2* ( f:x -- f:x*2 )  : f2* 1.         fswap `fscale ;
+  see also: `fscale f2/  ff.ff
+
+`fldln2  ( -- f:ln(2) ) natural logarithm of 2  $EDD9 `f: `fldln2` \ fldln2
+`fldlg2  ( -- f:lg(2) ) decimal logarithm of 2  $ECD9 `f: `fldlg2` \ fldlg2
+`fldl2e  ( -- f:lb(e) ) binary logarithm of e   $EAD9 `f: `fldl2e` \ fldl2e
+`fldl2t  ( -- f:lb(10)) binary logarithm of 10  $E9D9 `f: `fldl2t` \ fldl2t
+`fxl2y   ( f:y f:x -- f:x*lb(y)   )  $F1D9C9D9 `f: `fxl2y`   \ fxch fyl2x
+`fxl2yp1 ( f:y f:x -- f:x*lb(y+1) )  $F9D9C9D9 `f: `fxl2yp1` \ fxch fyl2xp1
+`f2xm1   ( f:x -- f:2^x-1 ) |x|<=1       $F0D9 `f: `f2xm1`   \ f2xm1
+  These are basic FPU instructions for logarithm and power functions.
+  see also: `fldnl2`
+
+fln`  ( f:x -- f:ln(x) ) natural logarithm  : fln`  `fldln2` `fxl2y` ;
+flog` ( f:x -- f:lg(x) ) decimal logarithm  : flog` `fldlg2` `fxl2y` ;
+f**   ( f:y f:x -- y^x ) power
+  : f** `fxl2y  : `f** fdup floor fswap fover-  `f2xm1 1. f+ `fscale ;
+faln  ( f:x -- f:e^x ) exponential (inverse natural logarithm)
+  : faln  `fldl2e f* `f** ;
+falog ( f:x -- f:10^x ) 10's power (inverse decimal logarithm)
+  : falog `fldl2t f* `f** ;
+fsqrt` ( f:x -- f:x^0.5 ) square root    $FAD9 `f: fsqrt`
+  see also: fln flog f** faln falog `fldln2 sqrt  ff.ff
+
+sqrt ( u -- sqrt(u) ) integer square root (rounded or truncated, see ff.ff)
+  see also: fsqrt  ff.ff
+
+fsinh  ( f:x -- f:sinh(x) ) hyperbolic sine    = (e(x)-e(-x))/2
+  : fsinh faln 1. fover/ f- f2/ ;
+fcosh  ( f:x -- f:cosh(x) ) hyperbolic cosine  = (e(x)+e(-x))/2
+  : fcosh faln 1. fover/ f+ f2/ ;
+ftanh  ( f:x -- f:tanh(x) ) hyperbolic tangent = (e(2x)-1)/(e(2x)+1)
+  : ftanh f2* faln 1. fover- fswap 1. f+ f/ ;
+fasinh ( f:x -- f:asinh(x) ) inverse hyperbolic sine    = ln(x+sqrt(x*x+1))
+  : fasinh fdup fover* 1. f+ fsqrt f+ fln ;
+facosh ( f:x -- f:acosh(x) ) inverse hyperbolic cosine  = ln(x+sqrt(x*x-1))
+  : facosh fdup fover* 1. f- fsqrt f+ fln ;
+fatanh ( f:x -- f:atanh(x) ) inverse hyperbolic tangent = (ln(1+x)-ln(1-x))/2
+  : fatanh 1. fover- fln fswap `fldln2 `fxl2yp1 fswap- f2/ ;
+  see also: fsinh fcosh ftanh fasinh facosh fatanh  ff.ff
+
+fsin`  ( f:x -- f:sin(x) ) sine        $FED9 `f: fsin` \ fsin
+fcos`  ( f:x -- f:cox(x) ) cosine      $FFD9 `f: fcos` \ fcos
+ftan`  ( f:x -- f:tan(x) ) tangent $D8DDF2D9 `f: ftan` \ fptan(-- tan 1) fdrop`
+fsincos` ( f:x -- f:sin(x) f:cos(x) )  $FBD9 `f: fsincos` \ fsincos
+  All trignometric functions arguments are in radians: pi radians = 180 degrees
+  see also: fsin fcos ftan fsincos fasin  ff.ff
+
+fasin ( f:x -- f:asin(x) ) arc-sine   = fatan(x/sqrt(1-x*x))
+  : fasin fdup fover* 1. fswap- fsqrt       fatan2 ;
+facos ( f:x -- f:acos(x) ) arc-cosine = fatan(sqrt(1-x*x)/x)
+  : facos fdup fover* 1. fswap- fsqrt fswap fatan2 ;
+fatan` ( f:x -- f:atan(x) ) arc-tangent  $F3D9E8D9 `f: fatan`  \ fld1 fpatan
+fatan2` ( f:y f:x -- f:atan(y/x) )           $F3D9 `f: fatan2` \ fpatan
+  All inverse trigonometric functions return values are in radians.
+  see also: fasin facos fatan fatan2 fsincos  ff.ff
+
+f0<`  ( f:x -- f:x ) : f0<`  $77 `f?1 ; \ `f?1  ja
+f0>=` ( f:x -- f:x ) : f0>=` $76 `f?1 ; \ `f?1  jbe
+f0<>` ( f:x -- f:x ) : f0<>` $75 `f?1 ; \ `f?1  jnz
+f0=`  ( f:x -- f:x ) : f0=`  $74 `f?1 ; \ `f?1  jz
+f0<=` ( f:x -- f:x ) : f0<=` $73 `f?1 ; \ `f?1  jae
+f0>`  ( f:x -- f:x ) : f0>`  $72 `f?1 ; \ `f?1  jb
+`f?1 ( c -- ) inlines code to compare ST0.versus.zero,
+  and selects condition for the next conditional jump
+  : `f?1 $F1DFEED9 , `?1 ; \ fld0  fcomip st0,st1
+  see also: f0< f< f0>= f>= f0<> f<> f0= f= f~ f0<= f<= f0> f>  ff.ff
+
+f<`  ( f:y f:x -- f:y f:x ) : f<`  $77 `f?2 ; \ `f?2  ja
+f>=` ( f:y f:x -- f:y f:x ) : f>=` $76 `f?2 ; \ `f?2  jbe
+f<>` ( f:y f:x -- f:y f:x ) : f<>` $75 `f?2 ; \ `f?2  jnz
+f=`  ( f:y f:x -- f:y f:x ) : f=`  $74 `f?2 ; \ `f?2  jz
+f<=` ( f:y f:x -- f:y f:x ) : f<=` $73 `f?2 ; \ `f?2  jae
+f>`  ( f:y f:x -- f:y f:x ) : f>`  $72 `f?2 ; \ `f?2  jb
+  f= and f<> test for equality down to the least significant bit, which isn't
+  appropriate for floats: see f~ for a better approximate comparison
+`f?2 ( c -- ) inlines code to compare ST1.versus.ST0,
+  and selects condition for the next conditional jump
+  : `f?2 $F1DB    w, `?1 ; \ fcomi st0,st1
+  see also: f< f0< f0>= f>= f0<> f<> f0= f= f~ f0<= f<= f0> f> `f?2  ff.ff
+
+f~ ( f:y f:x f:t -- f:y f:x ; nz? ) when comparing two floats, round-off errors
+  during previous computations may lead to different least significant bits,
+  therefore approximate comparison should be used (instead of f= or f<>):
+  f~ returns nzTRUE (i.e. i386 Z flag reset, otherwise zFALSE i.e. Z flag set)
+  - when t>0 if |y-x|<t         (absolute comparison)
+  - when t<0 if |y-x|<|t*(y+x)| (relative comparison)
+  - when t=0 if y=x             (bitwise comparison, same as f=)
+  : f~ f0= IF fdrop f= nzTRUE ? zFALSE ;THEN \ bitwise comparison
+    f0< IF fover ,"X~C~" f* fabs \ D8C3(fadd st0,st3)
+    THEN   fover ,"X~c~" fabs f> f2drop nzTRUE ? zFALSE ; \ D8E3(fsub st0,st3)
+
+f@`    ( @ -- f:x )    : f@` dupf@` drop` ;
+dupf@` ( @ -- @ f:x )  : dupf@` $2BDB, s01 ; \ fld  tw[ebx]
+f+!`   ( f:x @ -- )    : f+!` dupf@` f+` f!` ;
+f!`    ( f:x @ -- )    : f!` dupf!` drop` ;
+dupf!` ( f:x @ -- @ )  : dupf!` $3BDB, s01 ; \ fstp tw[ebx]
+  see also: f@ dupf@ f! dupf! f+! f,  ff.ff
+
+f,` ( f:x -- ) appends one float (10 bytes) x to the code&data space
+  : f,` $7DDB w, $0A6D8D00 , ; \ DB7D00(fstp[ebp])8D6D0A(lea ebp,[ebp+10])
+fvariable` ( <name> -- ; -- @ ) creates a float variable initially null
+  : fvariable` create` 0. f, anon:` ;
+flit` ( f:x -- ; -- f:x ) compiles a float literal, i.e. compiles code with x
+  as immediate data, which the code will push at runtime on the FPstak.
+  : flit` $0AEB w, here >r f, $2DDB w, r> , ; \ jmp+10  fliteral  fld tw[@]
+fconstant` ( f:x <name> -- ; -- f:x ) compiles a macro named name` (with the
+  appended backquote), which will compile code to push the float x on FPstack.
+  : `fcst $2DDB w, r> , ; \ fld tw[@]
+  : fconstant` ;` wsparse 2dup+ dupc@ >r dup>r '`' swap c! 1+ \ append `
+    here 0 header 2r> c!  `fcst ' call,  f, anon:` ;
+  see also: f, fvariable flit fconstant  ff.ff
+
+f# ( -- @ ) variable: holds the number of significant digits to display by f.
+  variable f#  4 f#!  \ number of displayed digits < 20
+f. ( f:x -- ) displays x in scientific notation with f# significant digits,
+  the last of which rounded to nearest; zero is displayed "0."; when a function
+  receives an argument off its definition range (such as asin(x) when |x|>1),
+  the FPU returns the special value "Not-A-Number" displayed "NaN"; when a
+  function result overflows the floats range (i.e. |f(x)|>=2^16384=10^4932),
+  the FPU returns the special value "+/-infinity" displayed "INF" or "-INF".
+  $E5D9 `f: `fxam` \ sw&4500= 4000:ZERO 0500:INF 0100:NaN
+  : `fdigit fdup floor fdup f>s '0'+ emit f- fover* ; \ f:10 f:x -- f:10 f:x
+  : f. \ f:n -- ; display float in scientific format with f# significant digits
+    f0< IF ."-" THEN fabs  `fxam fsw@ $4500&  $4000 CASE ."0._" fdrop ;THEN
+    $500 CASE ."INF_" fdrop ;THEN  $100 CASE ."NaN_" fdrop ;THEN drop
+    fdup flog floor f#@ 1- s>f f- falog f2/ f+ \ round LSdigit, may carry up
+    fdup flog floor fdup f>s falog f/ \ -- exp f:mant
+    10 s>f fswap `fdigit ."." f#@ 1- TIMES `fdigit REPEAT f2drop \ -- exp
+    ."e" .dec ; \ display exponent in decimal
+  see also: f# f. f.s  ff.ff
+
+f.s` ( -- ) displays the FPstack contents, either as .s with ST0 last on right,
+  or (change [1] to [0] in ff.ff) with binary dump and ST0 on top.
+  : f.s`  [ $35DD w, eob , ]  \ fnsave[eob]  cw[4],sw[4],env[20],stack[8*10]
+    eob 4+ w@ 11 >> negate 7& \ -- #items
+  [1] [IF] \ minimum display, TOS last on right:
+    dup .\ .":_" eob 28+ over 10* + swap TIMES 10- dupf@ f. REPEAT drop cr
+  [ELSE] \ full binary display, TOS first on top:
+    eob 7 TIMES @+ .l space REPEAT cr \ FPU-environment: 7 dwords
+    swap TIMES 10 TIMES r over+ c@ .b REPEAT space dupf@ f. cr 10+ REPEAT drop
+  [THEN] [ $25DD w, eob , ] ; \ frstor[eob]
+  see also: f# f. f.s  ff.ff
+
+fnumber ( @ # -- f:x ) converts string (starting at address "@" for "#" bytes)
+  into float, calling the vector "notfound" if the conversion fails. A float
+  literal may begin with a minus sign, must contain at least one decimal digit,
+  and a decimal point, or an "e" followed by an integer, maybe negative, power
+  of ten; examples:  -1.  0.123  1.23e-1  123e-3  -1e6  0.5  .5
+  fnumber is used to extend the literal-compiler for float literals input.
+  :^ `ferror !"???" \ vectorizable float-parsing-error handler
+  : fnumber  dup 2- 0< drop `ferror ?  10 s>f 0.
+    bounds dupc@ '-'- >r 0= IF 1+ THEN  swap dup>r swap \ sign dpl@end
+    BEGIN c@+ BEGIN \ -- @end @ c
+      '.' CASE r> u> drop `ferror ?  dup>r BREAK \ dpl@
+      'e' CASE r> 1+ over- 0> IF 0_ THEN -rot swap over- \ -- expn @ #
+          0= `ferror ? number 0- `ferror ? -rot + >r dup BREAK \ -- 0 0
+      '0'- 9 u> drop `ferror ?  fover* s>f f+
+    END u<= UNTIL drop fnip  r> swap - s>f falog f*
+    r> 0- 0= drop IF fnegate THEN ;
+  \ link float-literal-compiler to "notfound" and redefine "notfound":
+  : `f# fnumber flit` ;  `f# ' notfound !^  `ferror ' alias notfound
+  see also: literalcompiler notfound  ff.ff
+
+  -----------
+  SERIAL COMM
+
+uart! ( n -- ) selects the current serial context: up to 4 (n=0,1,2,3) serial
+  contexts may be maintained concurrently, all other serial commands operate
+  implicitely in the current serial context.
+  : uart! COM 2@ over 3& 1+ 8* COM+ 2!  3& 1+ 8* COM+ 2@ COM 2! ;
+port! ( n -- ) selects the port number of the current serial context:
+  Lin: n=0:/dev/ttyS0 .. 31:/dev/ttyS31, 32:/dev/ttyUSB0 .. n=63:/dev/ttyUSB31
+  Win: n=1:COM1 .. n=64:COM64  (Note: Windows"COM1" == Linux"/dev/ttyS0")
+.ports` ( -- ) displays a list of all available serial ports
+  Win: already open ports won't appear in this list
+  see also: uart! bps noParity RTS0 RX dumpterm COM  ff.ff
+
+COM ( -- @ ) constant: serial contexts base address; "COM@" returns the serial
+  file-descriptor(Linux) or handle(Windows) of the current serial context.
+  create COM -1 , 0 , \ current: file-desc/handle(-1=invalid), 4*port#+context#
+  -1 , 0 ,  -1 , 1 ,  -1 , 2 ,  -1 , 3 , \ 4 saved serial contexts
+  see also: uart!  ff.ff
+
+bps ( n -- ) opens the current serial port (selected by "port!" in the current
+  serial context) for read-write access, with speed = "n" Bits-Per-Second,
+  8 data-bits, no parity, 1 stop-bit. On failure, throws an exception,
+  otherwise the open file-descriptor(Linux) or handle(Windows) is stored in
+  the current serial context (and may be obtained with "COM@", as for example
+  to close the current serial port: "COM@ close ?ior").
+.bps` ( -- ) macro-executes the previous anonymous definition, then displays
+  the current UART context number, port, speed, data-bits, parity, stop-bit:
+  Lin: 0:ttyS0 9600 bps 8bits noParity 1stop \ after: "9600 bps .bps"
+  Win: 1:COM1 9600 bps 8bits oddParity 1stop \ after: "9600 bps oddParity .bps"
+  see also: bps uart! noParity RTS0  ff.ff
+
+noParity ( -- )
+oddParity ( -- )
+evenParity ( -- ) selects the parity of the current serial port, which must
+  already have been open (with "bps"); default is "noParity".
+  see also: noParity uart! bps RTS0  ff.ff
+
+DSR? ( -- ; nz? ) tests DSR input (DataSetReady)
+CTS? ( -- ; nz? ) tests CTS input (ClearToSend)
+RI? ( -- ; nz? ) tests RI input (RingIndicator)
+CD? ( -- ; nz? ) tests CD input (CarrierDetect)
+RTS0 ( -- ) clears RTS=0 (RequestToSend)
+RTS1 ( -- ) forces RTS=1
+DTR0 ( -- ) clears DTR=0 (DataTerminalReady)
+DTR1 ( -- ) forces DTR=1
+UBREAK ( -- ) clears during 100 ms the serial data line (i.e. generate a BREAK)
+  Clears or forces the modem-control-lines of the current serial port.
+  see also: RST0 uart!  ff.ff
+
+RX ( -- c ) returns next byte "c" from the current serial port; if none is
+  available, waits until one is received, or throws the exception "KBDirq/RX"
+  when "key?" becomes true
+RX? ( -- ; nz? ) returns zFALSE if "RX" would wait
+key? ( -- ; nz? ) returns zFALSE if "key" would wait
+TX ( c -- ) sends byte "c" into the current serial port
+XRECV ( @ # -- ) receives from the current serial port "#" bytes into "@"
+  : XRECV TIMES RX overc! 1+ REPEAT drop ;
+XSEND ( @ # -- ) sends to current serial port "#" bytes read from buffer "@"
+  : XSEND TIMES c@+ TX REPEAT drop ;
+  see also: RX utrace uart! bps  ff.ff
+
+dumpterm ( -- ) displays every byte received from the current serial port,
+  in reverse video, in hexadecimal (with ".b") preceded by an '\',
+  and sends every line typed at the keyboard, ending with a CR(ascii13=^M);
+  '^' and '\' are interpreted as prefixes:
+  . '^' toggles the next character.bit6 ("^@"="\00", "^A"="\01" etc)
+  . '\' followed by 2 hexadecimal digits generates the corresponding ASCII code
+  . '\' at end of line inhibits the transmission of the ending CR
+  . '\' followed by 'q' terminates dumpterm execution, ignoring end of line
+  . '\' is otherwise ignored (use "\\" resp. "\^" to generate a '\' resp. '^')
+dumbterm ( -- ) same as "dumpterm", except displayable received bytes, i.e.
+  CR=ascii13, LF=ascii10, and space=ascii32 upto ~=ascii126, are normally
+  displayed (as single characters, instead of hexadecimal).
+utrace ( -- @ ) variable: when non-null, the current serial port communicated
+  data bytes are traced in hexadecimal (with ".b") with RX (resp. TX) bytes
+  preceded by a "<" (resp. ">")
+  see also: dumpterm RX uart!  ff.ff
+
+  -----------
+  END-OF-FILE
